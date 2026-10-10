@@ -1,0 +1,32 @@
+---
+- name: Bootstrap automation user
+  hosts: lab
+  become: true
+  tasks:
+    - name: Install sudo
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create ansible user
+      ansible.builtin.user:
+        name: ansible
+        shell: /bin/bash
+        groups: sudo
+        append: true
+
+    - name: Authorize control node SSH key
+      ansible.posix.authorized_key:
+        user: ansible
+        key: "{{ lookup('ansible.builtin.file', 'ansible-ctl.pub') }}"
+
+    - name: Passworless sudo for ansible
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/ansible
+        content: "ansible ALL=(ALL) NOPASSWD:ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: visudo -cf %s
