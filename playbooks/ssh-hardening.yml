@@ -1,6 +1,6 @@
 ---
 - name: Harden SSH
-  hosts: tags_ansible:unregistered
+  hosts: "{{ target | default('tags_ansible:unregistered') }}"
   become: true
   tasks:
     - name: Disable ssh socket activation

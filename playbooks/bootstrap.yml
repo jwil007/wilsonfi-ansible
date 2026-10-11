@@ -1,8 +1,9 @@
 ---
 - name: Bootstrap automation user
-  hosts: tags_ansible:unregistered
+  hosts: "{{ target | default('tags_ansible:unregistered') }}"
   become: true
-  ansible_user: root
+  vars:
+    ansible_user: root
   tasks:
     - name: Install sudo
       ansible.builtin.apt:

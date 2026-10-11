@@ -1,6 +1,6 @@
 ---
 - name: Write observed facts back to NetBox
-  hosts: tags_ansible
+  hosts: "{{ target | default('tags_ansible') }}"
   become: false
   gather_facts: true
   tasks:
@@ -10,8 +10,6 @@
         netbox_token: "{{ netbox_token }}"
         data:
           name: "{{ inventory_hostname }}"
-          vcpus: "{{ ansible_facts['processor_vcpus'] }}"
-          memory: "{{ ansible_facts['memtotal_mb'] }}"
           custom_fields:
             os_version: "{{ ansible_facts['distribution_version'] }}"
             last_seen: "{{ ansible_facts['date_time']['date'] }}"
