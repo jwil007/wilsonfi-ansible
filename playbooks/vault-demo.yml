@@ -1,0 +1,12 @@
+---
+- name: Vault demo
+  hosts: lab
+  become: true
+  tasks:
+    - name: Write a secret to the target
+      ansible.builtin.copy:
+        dest: /root/demo-secret
+        content: "{{ demo_secret }}\n"
+        mode: "0600"
+      no_log: true
+      diff: false

@@ -1,0 +1,6 @@
+ansible_python_interpreter: /usr/bin/python3
+ansible_user: ansible
+motd_banner: "wilsonfi lab"
+demo_secret: "{{ vault_demo_secret }}"
+netbox_url: https://netbox.wilsonfi.dev
+netbox_token: "{{ vault_netbox_token }}"
