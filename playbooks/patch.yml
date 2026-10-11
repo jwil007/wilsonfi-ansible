@@ -1,0 +1,28 @@
+---
+# Rolling patch by ring. any_errors_fatal: a failure anywhere stops the
+# whole rollout, so a bad update never reaches the next ring.
+
+- name: Patch ring 0 | sandbox
+  hosts: device_roles_sandbox
+  become: true
+  any_errors_fatal: true
+  tasks:
+    - name: Patch this host
+      ansible.builtin.import_tasks: tasks/patch-host.yml
+
+- name: Patch ring 1 | utility
+  hosts: device_roles_utility
+  become: true
+  any_errors_fatal: true
+  tasks:
+    - name: Patch this host
+      ansible.builtin.import_tasks: tasks/patch-host.yml
+
+- name: Patch ring 2 | core, one host at a time
+  hosts: device_roles_core
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Patch this host
+      ansible.builtin.import_tasks: tasks/patch-host.yml
