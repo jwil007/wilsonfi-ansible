@@ -1,6 +1,6 @@
 ---
 - name: Bootstrap automation user
-  hosts: tags_ansible
+  hosts: tags_ansible:unregistered
   become: true
   tasks:
     - name: Install sudo

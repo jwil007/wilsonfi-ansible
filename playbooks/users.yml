@@ -1,6 +1,6 @@
 ---
 - name: Personal admin account
-  hosts: tags_ansible
+  hosts: tags_ansible:unregistered
   become: true
   tasks:
     - name: Create jacob
