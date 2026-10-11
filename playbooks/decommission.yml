@@ -1,0 +1,98 @@
+---
+- name: Decommission | Proxmox then NetBox
+  hosts: localhost
+  gather_facts: false
+  module_defaults:
+    community.proxmox.proxmox: &pve
+      api_host: "{{ proxmox_api_host }}"
+      api_user: "{{ proxmox_api_user }}"
+      api_token_id: "{{ proxmox_api_token_id }}"
+      api_token_secret: "{{ proxmox_api_token_secret }}"
+      validate_certs: "{{ proxmox_validate_certs }}"
+      node: pve
+    community.proxmox.proxmox_vm_info: *pve
+    netbox.netbox.netbox_ip_address: &nb
+      netbox_url: "{{ netbox_url }}"
+      netbox_token: "{{ netbox_token }}"
+    netbox.netbox.netbox_virtual_machine: *nb
+  tasks:
+    # ---------- Guards ----------
+    - name: Require a target
+      ansible.builtin.assert:
+        that: target is defined
+        fail_msg: "Run with -e target=<vm name>"
+
+    - name: Look up the VM in NetBox
+      ansible.builtin.set_fact:
+        nb_vm: >-
+          {{ query('netbox.netbox.nb_lookup', 'virtual-machines',
+                   api_endpoint=netbox_url, token=netbox_token,
+                   api_filter='name=' ~ target)
+             | map(attribute='value') | first | default({}) }}
+
+    - name: Only tear down LXCs marked Decommissioning
+      ansible.builtin.assert:
+        that:
+          - nb_vm.name is defined
+          - nb_vm.status.value == 'decommissioning'
+          - "'lxc' in (nb_vm.tags | map(attribute='slug'))"
+        fail_msg: "{{ target }} must exist in NetBox as an LXC with status Decommissioning"
+
+    # ---------- Proxmox first ----------
+    - name: Find the container in Proxmox
+      community.proxmox.proxmox_vm_info:
+        name: "{{ target }}"
+        type: lxc
+      register: pve_info
+
+    - name: Stop and destroy it
+      when: pve_info.proxmox_vms | length > 0
+      vars:
+        ct_vmid: "{{ pve_info.proxmox_vms[0].vmid }}"
+      block:
+        - name: Stop
+          community.proxmox.proxmox:
+            vmid: "{{ ct_vmid }}"
+            state: stopped
+            force: true
+
+        - name: Destroy
+          community.proxmox.proxmox:
+            vmid: "{{ ct_vmid }}"
+            state: absent
+          register: pve_destroy
+          retries: 10
+          delay: 3
+          until: pve_destroy is succeeded
+
+    # ---------- Then NetBox ----------
+    - name: Find the VM's IP addresses
+      ansible.builtin.set_fact:
+        nb_ips: >-
+          {{ query('netbox.netbox.nb_lookup', 'ip-addresses',
+                   api_endpoint=netbox_url, token=netbox_token,
+                   api_filter='virtual_machine=' ~ target)
+             | map(attribute='value') | list }}
+
+    - name: Release the IPs
+      netbox.netbox.netbox_ip_address:
+        data:
+          address: "{{ item.address }}"
+          vrf: "{{ item.vrf.name if item.vrf else omit }}"
+        state: absent
+      loop: "{{ nb_ips }}"
+      loop_control:
+        label: "{{ item.address }}"
+
+    - name: Delete the VM record
+      netbox.netbox.netbox_virtual_machine:
+        data:
+          name: "{{ target }}"
+        state: absent
+
+    # ---------- Control node housekeeping ----------
+    - name: Forget the old SSH host key
+      ansible.builtin.known_hosts:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ [target] + (nb_ips | map(attribute='address') | map('split', '/') | map('first') | list) }}"

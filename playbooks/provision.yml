@@ -112,6 +112,10 @@
       community.proxmox.proxmox:
         vmid: "{{ pve_ct.vmid }}"
         state: started
+      register: pve_start
+      retries: 10
+      delay: 3
+      until: pve_start is succeeded
 
     - name: Wait for SSH
       ansible.builtin.wait_for:
