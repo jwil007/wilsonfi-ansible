@@ -1,0 +1,18 @@
+---
+- name: Write observed facts back to NetBox
+  hosts: tags_ansible
+  become: false
+  gather_facts: true
+  tasks:
+    - name: Update VM with observed values
+      netbox.netbox.netbox_virtual_machine:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        data:
+          name: "{{ inventory_hostname }}"
+          vcpus: "{{ ansible_facts['processor_vcpus'] }}"
+          memory: "{{ ansible_facts['memtotal_mb'] }}"
+          custom_fields:
+            os_version: "{{ ansible_facts['distribution_version'] }}"
+            last_seen: "{{ ansible_facts['date_time']['date'] }}"
+      delegate_to: localhost

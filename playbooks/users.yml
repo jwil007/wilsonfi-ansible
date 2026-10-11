@@ -1,0 +1,19 @@
+---
+- name: Personal admin account
+  hosts: tags_ansible
+  become: true
+  tasks:
+    - name: Create jacob
+      ansible.builtin.user:
+        name: jacob
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        password: "{{ jacob_password | password_hash('sha512') }}"
+        update_password: on_create
+      no_log: true
+
+    - name: Authorize laptop key for jacob
+      ansible.posix.authorized_key:
+        user: jacob
+        key: "{{ lookup('ansible.builtin.file', 'jacob.pub') }}"

@@ -1,6 +1,6 @@
 ---
 - name: Harden SSH
-  hosts: lab
+  hosts: tags_ansible
   become: true
   tasks:
     - name: Disable ssh socket activation

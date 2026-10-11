@@ -4,3 +4,4 @@ motd_banner: "wilsonfi lab"
 demo_secret: "{{ vault_demo_secret }}"
 netbox_url: https://netbox.wilsonfi.dev
 netbox_token: "{{ vault_netbox_token }}"
+jacob_password: "{{ vault_jacob_password }}"

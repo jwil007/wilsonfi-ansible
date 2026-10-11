@@ -1,5 +1,5 @@
 - name: Message of the day
-  hosts: lab
+  hosts: tags_ansible
   become: true
   tasks:
     - name: Render /etc/motd

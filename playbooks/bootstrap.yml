@@ -1,6 +1,6 @@
 ---
 - name: Bootstrap automation user
-  hosts: lab
+  hosts: tags_ansible
   become: true
   tasks:
     - name: Install sudo
