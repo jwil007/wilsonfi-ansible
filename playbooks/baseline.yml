@@ -1,0 +1,9 @@
+---
+- name: Personal accounts
+  ansible.builtin.import_playbook: users.yml
+
+- name: SSH hardening
+  ansible.builtin.import_playbook: ssh-hardening.yml
+
+- name: Message of the day
+  ansible.builtin.import_playbook: motd.yml

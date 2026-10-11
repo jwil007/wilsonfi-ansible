@@ -2,3 +2,5 @@ pynetbox
 netaddr
 pytz
 passlib
+proxmoxer
+requests
