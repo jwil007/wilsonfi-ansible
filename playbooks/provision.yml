@@ -150,6 +150,14 @@
         groups: unregistered
         ansible_host: "{{ provision_ip.split('/')[0] }}"
         ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+        # Not in the NetBox inventory until it's Active, so hand over the
+        # NetBox values roles expect (same names nb_inventory uses)
+        primary_ip4: "{{ provision_ip.split('/')[0] }}"
+        device_roles: "{{ [nb_vm.role.slug] if nb_vm.role else [] }}"
+        netbox_tags: "{{ nb_vm.tags | map(attribute='slug') | list }}"
+        cluster: "{{ nb_vm.cluster.name }}"
+        cluster_device:
+          name: "{{ provision_node }}"
 
 # ---------- Configure, then hand over to NetBox ----------
 - name: Provision | Bootstrap

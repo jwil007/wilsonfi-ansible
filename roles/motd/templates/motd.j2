@@ -1,5 +1,8 @@
 {{ motd_banner }}
 
-Host : {{ inventory_hostname }} ({{ ansible_facts['default_ipv4']['address'] }})
-OS   : {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
-RAM  : {{ ansible_facts['memtotal_mb'] }} MB
+Host    : {{ inventory_hostname }} ({{ primary_ip4 | default('no primary IP') }})
+Role    : {{ device_roles | default(['unassigned']) | join(', ') }}
+Tags    : {{ netbox_tags | default([]) | join(', ') }}
+Runs on : {{ cluster_device.name | default('unknown') }} (cluster {{ cluster | default('unknown') }})
+
+Managed by Ansible from NetBox - local edits will be overwritten.
