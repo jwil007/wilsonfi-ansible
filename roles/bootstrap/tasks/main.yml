@@ -11,6 +11,20 @@
     update_cache: true
     cache_valid_time: 3600
 
+- name: Install git
+  ansible.builtin.apt:
+    name: git
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install curl
+  ansible.builtin.apt:
+    name: curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: Create the automation user
   ansible.builtin.user:
     name: "{{ bootstrap_user }}"
