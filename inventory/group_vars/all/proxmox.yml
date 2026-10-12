@@ -1,0 +1,18 @@
+---
+proxmox_api_user: ansible@pve
+proxmox_api_token_id: automation
+proxmox_api_token_secret: "{{ vault_proxmox_token }}"
+proxmox_validate_certs: false
+
+# Used when a NetBox VM has no Device (host) set
+proxmox_default_node: pve
+
+# One entry per Proxmox host. If hosts are clustered, api_host can be the
+# same for all of them; netbox_cluster is the NetBox cluster the host is in.
+proxmox_nodes:
+  pve:
+    api_host: 10.0.10.21
+    netbox_cluster: pve
+    storage: local-lvm
+    bridge: vmbr0
+    lxc_template: local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst

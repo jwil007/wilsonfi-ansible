@@ -27,12 +27,13 @@
       when: "'passwordauthentication no' not in sshd_t.stdout_lines"
 
     - name: Is ssh socket activation on?
-      ansible.builtin.command: systemctl is-enabled ssh.socket
+      # Read-only query; no module reports a unit's enabled state
+      ansible.builtin.command: systemctl is-enabled ssh.socket  # noqa: command-instead-of-module
       register: ssh_socket
       changed_when: false
       failed_when: false
 
-    - name: ssh.socket must be off
+    - name: Socket activation must be off
       ansible.builtin.set_fact:
         findings: "{{ findings + ['ssh: socket activation is enabled'] }}"
       when: ssh_socket.stdout == 'enabled'
@@ -44,7 +45,10 @@
 
     - name: NetBox OS version must be current
       ansible.builtin.set_fact:
-        findings: "{{ findings + ['netbox: os_version says ' ~ (custom_fields.os_version | default('nothing')) ~ ', host runs ' ~ ansible_facts['distribution_version']] }}"
+        findings: >-
+          {{ findings + ['netbox: os_version says '
+             ~ (custom_fields.os_version | default('nothing'))
+             ~ ', host runs ' ~ ansible_facts['distribution_version']] }}
       when: (custom_fields.os_version | default('')) != ansible_facts['distribution_version']
 
     - name: Check for a pending reboot
@@ -61,28 +65,37 @@
   hosts: localhost
   gather_facts: false
   tasks:
-    - name: All guests on Proxmox, with their config
+    - name: All guests on every Proxmox host, with their config
       community.proxmox.proxmox_vm_info:
-        api_host: "{{ proxmox_api_host }}"
+        api_host: "{{ item.value.api_host }}"
         api_user: "{{ proxmox_api_user }}"
         api_token_id: "{{ proxmox_api_token_id }}"
         api_token_secret: "{{ proxmox_api_token_secret }}"
         validate_certs: "{{ proxmox_validate_certs }}"
-        node: pve
+        node: "{{ item.key }}"
         config: current
-      register: pve
+      loop: "{{ proxmox_nodes | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: pve_per_node
 
-    - name: All VMs NetBox has in cluster pve
+    - name: All VMs NetBox has in those hosts' clusters
       ansible.builtin.set_fact:
         nb_vms: >-
-          {{ query('netbox.netbox.nb_lookup', 'virtual-machines',
+          {{ nb_vms | default([]) +
+             query('netbox.netbox.nb_lookup', 'virtual-machines',
                    api_endpoint=netbox_url, token=netbox_token,
-                   api_filter='cluster=pve')
+                   api_filter='cluster=' ~ item)
              | map(attribute='value') | list }}
+      loop: "{{ proxmox_nodes.values() | map(attribute='netbox_cluster') | unique }}"
+
+    - name: Flatten the per-host guest lists
+      ansible.builtin.set_fact:
+        pve_vms: "{{ pve_per_node.results | map(attribute='proxmox_vms') | flatten }}"
 
     - name: Compare the two lists
       ansible.builtin.set_fact:
-        pve_names: "{{ pve.proxmox_vms | map(attribute='name') | list }}"
+        pve_names: "{{ pve_vms | map(attribute='name') | list }}"
         nb_names: "{{ nb_vms | map(attribute='name') | list }}"
         nb_active: "{{ nb_vms | selectattr('status.value', 'equalto', 'active') | map(attribute='name') | list }}"
         pve_findings: []
@@ -104,7 +117,7 @@
         nb_onboot: "{{ nb_vm.start_on_boot.value | default('off') == 'on' }}"
       ansible.builtin.set_fact:
         pve_findings: "{{ pve_findings + ['start on boot: ' ~ item.name ~ ' is ' ~ pve_onboot ~ ' on Proxmox, ' ~ nb_onboot ~ ' in NetBox'] }}"
-      loop: "{{ pve.proxmox_vms | selectattr('name', 'in', nb_names) | list }}"
+      loop: "{{ pve_vms | selectattr('name', 'in', nb_names) | list }}"
       loop_control:
         label: "{{ item.name }}"
       when: pve_onboot | bool != nb_onboot | bool

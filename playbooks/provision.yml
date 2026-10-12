@@ -1,4 +1,6 @@
 ---
+# NetBox-first provisioning: a VM marked Planned in NetBox becomes a running,
+# configured, Active LXC.   ansible-playbook playbooks/provision.yml -e target=<name>
 - name: Provision | NetBox and Proxmox
   hosts: localhost
   gather_facts: false
@@ -7,8 +9,6 @@
     provision_vrf: Infra
     provision_gateway: 10.0.10.1
     provision_dns: 10.0.50.53,10.0.10.6
-    provision_template: local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst
-    provision_storage: local-lvm
   module_defaults:
     netbox.netbox.netbox_vm_interface: &nb
       netbox_url: "{{ netbox_url }}"
@@ -16,14 +16,12 @@
     netbox.netbox.netbox_ip_address: *nb
     netbox.netbox.netbox_virtual_machine: *nb
     community.proxmox.proxmox:
-      api_host: "{{ proxmox_api_host }}"
       api_user: "{{ proxmox_api_user }}"
       api_token_id: "{{ proxmox_api_token_id }}"
       api_token_secret: "{{ proxmox_api_token_secret }}"
       validate_certs: "{{ proxmox_validate_certs }}"
-      node: pve
   tasks:
-    # ---------- Piece 1: NetBox ----------
+    # ---------- NetBox: intent ----------
     - name: Require a target
       ansible.builtin.assert:
         that: target is defined
@@ -44,6 +42,20 @@
           - nb_vm.status.value == 'planned'
           - "'ansible' in (nb_vm.tags | map(attribute='slug'))"
         fail_msg: "{{ target }} must exist in NetBox with status Planned and tag 'ansible'"
+
+    - name: Pick the Proxmox host (the VM's Device in NetBox, else the default)
+      ansible.builtin.set_fact:
+        provision_node: "{{ nb_vm.device.name if nb_vm.device else proxmox_default_node }}"
+
+    - name: The host must be one we know, in the VM's cluster
+      ansible.builtin.assert:
+        that:
+          - provision_node in proxmox_nodes
+          - nb_vm.cluster is not none
+          - nb_vm.cluster.name == proxmox_nodes[provision_node].netbox_cluster
+        fail_msg: >-
+          {{ target }}: host '{{ provision_node }}' must be in proxmox_nodes and
+          match the VM's NetBox cluster
 
     - name: Allocate an IP if the VM has none
       when: nb_vm.primary_ip4 is none
@@ -75,9 +87,10 @@
                 address: "{{ new_ip.ip_address.address }}"
                 vrf: "{{ provision_vrf }}"
 
-    - name: Settle on the address and sizing
+    - name: Settle on the address, host and sizing
       ansible.builtin.set_fact:
         provision_ip: "{{ new_ip.ip_address.address if new_ip is changed else nb_vm.primary_ip4.address }}"
+        provision_host: "{{ proxmox_nodes[provision_node] }}"
         provision_cores: "{{ nb_vm.vcpus | default(1, true) | int }}"
         provision_memory: "{{ nb_vm.memory | default(512, true) | int }}"
         provision_disk_gb: "{{ (nb_vm.disk | default(8192, true) | int / 1024) | int }}"
@@ -85,15 +98,20 @@
 
     - name: Show the plan
       ansible.builtin.debug:
-        msg: "{{ target }} → {{ provision_ip }}, {{ provision_cores }} vCPU, {{ provision_memory }} MB RAM, {{ provision_disk_gb }} GB disk, start on boot: {{ provision_onboot }}"
+        msg: >-
+          {{ target }} on {{ provision_node }} → {{ provision_ip }},
+          {{ provision_cores }} vCPU, {{ provision_memory }} MB RAM,
+          {{ provision_disk_gb }} GB disk, start on boot: {{ provision_onboot }}
 
-    # ---------- Piece 2: Proxmox ----------
+    # ---------- Proxmox: build ----------
     - name: Create the container
       community.proxmox.proxmox:
+        api_host: "{{ provision_host.api_host }}"
+        node: "{{ provision_node }}"
         hostname: "{{ target }}"
-        ostemplate: "{{ provision_template }}"
-        storage: "{{ provision_storage }}"
-        disk: "{{ provision_storage }}:{{ provision_disk_gb }}"
+        ostemplate: "{{ provision_host.lxc_template }}"
+        storage: "{{ provision_host.storage }}"
+        disk: "{{ provision_host.storage }}:{{ provision_disk_gb }}"
         cores: "{{ provision_cores }}"
         memory: "{{ provision_memory }}"
         swap: 512
@@ -101,15 +119,18 @@
         features:
           - nesting=1
         netif:
-          net0: "name=eth0,bridge=vmbr0,ip={{ provision_ip }},gw={{ provision_gateway }}"
+          net0: "name=eth0,bridge={{ provision_host.bridge }},ip={{ provision_ip }},gw={{ provision_gateway }}"
         nameserver: "{{ provision_dns }}"
-        pubkey: "{{ lookup('ansible.builtin.file', 'ansible-ctl.pub') }}"
+        pubkey: "{{ automation_pubkey }}"
         onboot: "{{ provision_onboot }}"
         state: present
       register: pve_ct
 
+    # Proxmox's cluster-wide guest list lags a few seconds behind a create
     - name: Start it
       community.proxmox.proxmox:
+        api_host: "{{ provision_host.api_host }}"
+        node: "{{ provision_node }}"
         vmid: "{{ pve_ct.vmid }}"
         state: started
       register: pve_start
@@ -129,8 +150,16 @@
         groups: unregistered
         ansible_host: "{{ provision_ip.split('/')[0] }}"
         ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+        # Not in the NetBox inventory until it's Active, so hand over the
+        # NetBox values roles expect (same names nb_inventory uses)
+        primary_ip4: "{{ provision_ip.split('/')[0] }}"
+        device_roles: "{{ [nb_vm.role.slug] if nb_vm.role else [] }}"
+        netbox_tags: "{{ nb_vm.tags | map(attribute='slug') | list }}"
+        cluster: "{{ nb_vm.cluster.name }}"
+        cluster_device:
+          name: "{{ provision_node }}"
 
-# ---------- Piece 3: configure, then hand over to NetBox ----------
+# ---------- Configure, then hand over to NetBox ----------
 - name: Provision | Bootstrap
   ansible.builtin.import_playbook: bootstrap.yml
 

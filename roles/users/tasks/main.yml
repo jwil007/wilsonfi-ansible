@@ -1,0 +1,21 @@
+---
+- name: Create admin accounts
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    shell: /bin/bash
+    groups: sudo
+    append: true
+    password: "{{ item.password | password_hash('sha512') }}"
+    update_password: on_create
+  loop: "{{ users_admins }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Authorize their SSH keys
+  ansible.posix.authorized_key:
+    user: "{{ item.name }}"
+    key: "{{ item.pubkey }}"
+  loop: "{{ users_admins }}"
+  loop_control:
+    label: "{{ item.name }}"

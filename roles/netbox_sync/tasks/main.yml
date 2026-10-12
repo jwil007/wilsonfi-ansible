@@ -1,0 +1,13 @@
+---
+# Observed values only. vCPUs/memory are intent (set in NetBox, applied by
+# provision.yml), so they are deliberately not written here.
+- name: Write observed facts to the NetBox VM
+  netbox.netbox.netbox_virtual_machine:
+    netbox_url: "{{ netbox_sync_url }}"
+    netbox_token: "{{ netbox_sync_token }}"
+    data:
+      name: "{{ inventory_hostname }}"
+      custom_fields:
+        os_version: "{{ ansible_facts['distribution_version'] }}"
+        last_seen: "{{ ansible_facts['date_time']['date'] }}"
+  delegate_to: localhost

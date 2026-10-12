@@ -1,12 +1,18 @@
+---
 ansible_python_interpreter: /usr/bin/python3
 ansible_user: ansible
-motd_banner: "wilsonfi lab"
-demo_secret: "{{ vault_demo_secret }}"
+
 netbox_url: https://netbox.wilsonfi.dev
 netbox_token: "{{ vault_netbox_token }}"
-jacob_password: "{{ vault_jacob_password }}"
-proxmox_api_host: 10.0.10.21
-proxmox_api_user: ansible@pve
-proxmox_api_token_id: automation
-proxmox_api_token_secret: "{{ vault_proxmox_token }}"
-proxmox_validate_certs: false
+
+# Control node identity: installed for the ansible user by the bootstrap role,
+# and for root on new LXCs by provision.yml
+automation_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH5ESUsm8w2Dxu/casrC7WKEK0HOeNPvTPeDH0eI6XYn ansible@ansible-ctl"
+bootstrap_pubkey: "{{ automation_pubkey }}"
+
+users_admins:
+  - name: jacob
+    pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOKdM3KMyYnj0IIa3JrSfAZ1PW9HIIkUZTT0NZjjLcd8 jacob@laptop"
+    password: "{{ vault_jacob_password }}"
+
+motd_banner: "wilsonfi lab"

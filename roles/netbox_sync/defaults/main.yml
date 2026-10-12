@@ -1,0 +1,3 @@
+---
+netbox_sync_url: "{{ netbox_url }}"
+netbox_sync_token: "{{ netbox_token }}"

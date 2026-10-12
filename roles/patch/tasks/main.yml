@@ -1,0 +1,45 @@
+---
+- name: Record failed units before patching
+  # Read-only; no module lists failed units
+  ansible.builtin.command: systemctl list-units --failed --plain --no-legend  # noqa: command-instead-of-module
+  register: patch_failed_before
+  changed_when: false
+
+- name: Upgrade all packages
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: dist
+    autoremove: true
+
+- name: Check whether a reboot is required
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: patch_reboot_flag
+
+- name: Reboot and wait for it to come back
+  ansible.builtin.reboot:
+    reboot_timeout: 300
+  when:
+    - patch_reboot_flag.stat.exists
+    - inventory_hostname not in patch_manual_reboot_hosts
+
+- name: Flag hosts that need a manual reboot
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }} needs a reboot - do it by hand after this run"
+  when:
+    - patch_reboot_flag.stat.exists
+    - inventory_hostname in patch_manual_reboot_hosts
+
+- name: Record failed units after patching
+  # Read-only; no module lists failed units
+  ansible.builtin.command: systemctl list-units --failed --plain --no-legend  # noqa: command-instead-of-module
+  register: patch_failed_after
+  changed_when: false
+
+- name: No new failed units
+  vars:
+    before: "{{ patch_failed_before.stdout_lines | map('split') | map('first') | list }}"
+    after: "{{ patch_failed_after.stdout_lines | map('split') | map('first') | list }}"
+  ansible.builtin.assert:
+    that: after | difference(before) | length == 0
+    fail_msg: "New failed units on {{ inventory_hostname }}: {{ after | difference(before) }}"
