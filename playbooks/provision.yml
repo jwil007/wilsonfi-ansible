@@ -121,7 +121,7 @@
         netif:
           net0: "name=eth0,bridge={{ provision_host.bridge }},ip={{ provision_ip }},gw={{ provision_gateway }}"
         nameserver: "{{ provision_dns }}"
-        pubkey: "{{ automation_pubkey }}"
+        pubkey: "{{ bootstrap_pubkey }}"
         onboot: "{{ provision_onboot }}"
         state: present
       register: pve_ct
