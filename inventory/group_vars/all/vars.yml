@@ -7,8 +7,10 @@ netbox_token: "{{ vault_netbox_token }}"
 
 # Control node identity: installed for the ansible user by the bootstrap role,
 # and for root on new LXCs by provision.yml
-automation_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH5ESUsm8w2Dxu/casrC7WKEK0HOeNPvTPeDH0eI6XYn ansible@ansible-ctl"
-bootstrap_pubkey: "{{ automation_pubkey }}"
+automation_pubkeys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH5ESUsm8w2Dxu/casrC7WKEK0HOeNPvTPeDH0eI6XYn ansible@ansible-ctl"
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEHxhxb/Q4hNSP14pDr2eJ3pXf+XlfojnOMyL/+tMUat semaphore@semaphore"
+bootstrap_pubkey: "{{ automation_pubkeys | join('\n') }}"
 
 users_admins:
   - name: jacob

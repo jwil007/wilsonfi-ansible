@@ -5,6 +5,8 @@
   hosts: "{{ target | default('tags_ansible:unregistered') }}"
   become: true
   roles:
+    - role: bootstrap
+      tags: access
     - role: users
       tags: users
     - role: ssh_hardening
