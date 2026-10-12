@@ -26,3 +26,6 @@
   tasks:
     - name: Patch this host
       ansible.builtin.import_tasks: tasks/patch-host.yml
+
+- name: Patch | Observed facts to NetBox
+  ansible.builtin.import_playbook: netbox-sync-facts.yml

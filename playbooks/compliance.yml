@@ -1,0 +1,137 @@
+---
+# Report-only compliance check. Changes nothing; collects findings and
+# fails at the very end if there are any (so a scheduler shows it red).
+
+- name: Compliance | on each host
+  hosts: tags_ansible
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Start with no findings
+      ansible.builtin.set_fact:
+        findings: []
+
+    - name: Read the effective sshd config
+      ansible.builtin.command: sshd -T
+      register: sshd_t
+      changed_when: false
+
+    - name: Root SSH login must be off
+      ansible.builtin.set_fact:
+        findings: "{{ findings + ['sshd: root login is allowed'] }}"
+      when: "'permitrootlogin no' not in sshd_t.stdout_lines"
+
+    - name: Password SSH must be off
+      ansible.builtin.set_fact:
+        findings: "{{ findings + ['sshd: password login is allowed'] }}"
+      when: "'passwordauthentication no' not in sshd_t.stdout_lines"
+
+    - name: Is ssh socket activation on?
+      ansible.builtin.command: systemctl is-enabled ssh.socket
+      register: ssh_socket
+      changed_when: false
+      failed_when: false
+
+    - name: ssh.socket must be off
+      ansible.builtin.set_fact:
+        findings: "{{ findings + ['ssh: socket activation is enabled'] }}"
+      when: ssh_socket.stdout == 'enabled'
+
+    - name: NetBox primary IP must actually be on the host
+      ansible.builtin.set_fact:
+        findings: "{{ findings + ['netbox: primary IP ' ~ primary_ip4 ~ ' is not on the host'] }}"
+      when: primary_ip4 | default('') not in ansible_facts['all_ipv4_addresses']
+
+    - name: NetBox OS version must be current
+      ansible.builtin.set_fact:
+        findings: "{{ findings + ['netbox: os_version says ' ~ (custom_fields.os_version | default('nothing')) ~ ', host runs ' ~ ansible_facts['distribution_version']] }}"
+      when: (custom_fields.os_version | default('')) != ansible_facts['distribution_version']
+
+    - name: Check for a pending reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_flag
+
+    - name: No reboot should be pending
+      ansible.builtin.set_fact:
+        findings: "{{ findings + ['patching: reboot pending'] }}"
+      when: reboot_flag.stat.exists
+
+- name: Compliance | Proxmox vs NetBox
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: All guests on Proxmox, with their config
+      community.proxmox.proxmox_vm_info:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+        node: pve
+        config: current
+      register: pve
+
+    - name: All VMs NetBox has in cluster pve
+      ansible.builtin.set_fact:
+        nb_vms: >-
+          {{ query('netbox.netbox.nb_lookup', 'virtual-machines',
+                   api_endpoint=netbox_url, token=netbox_token,
+                   api_filter='cluster=pve')
+             | map(attribute='value') | list }}
+
+    - name: Compare the two lists
+      ansible.builtin.set_fact:
+        pve_names: "{{ pve.proxmox_vms | map(attribute='name') | list }}"
+        nb_names: "{{ nb_vms | map(attribute='name') | list }}"
+        nb_active: "{{ nb_vms | selectattr('status.value', 'equalto', 'active') | map(attribute='name') | list }}"
+        pve_findings: []
+
+    - name: On Proxmox but not in NetBox (built by hand?)
+      ansible.builtin.set_fact:
+        pve_findings: "{{ pve_findings + ['not in NetBox: ' ~ item] }}"
+      loop: "{{ pve_names | difference(nb_names) }}"
+
+    - name: Active in NetBox but missing from Proxmox
+      ansible.builtin.set_fact:
+        pve_findings: "{{ pve_findings + ['missing from Proxmox: ' ~ item] }}"
+      loop: "{{ nb_active | difference(pve_names) }}"
+
+    - name: Start-on-boot must match NetBox
+      vars:
+        nb_vm: "{{ nb_vms | selectattr('name', 'equalto', item.name) | first }}"
+        pve_onboot: "{{ (item.config.onboot | default(0) | int) == 1 }}"
+        nb_onboot: "{{ nb_vm.start_on_boot.value | default('off') == 'on' }}"
+      ansible.builtin.set_fact:
+        pve_findings: "{{ pve_findings + ['start on boot: ' ~ item.name ~ ' is ' ~ pve_onboot ~ ' on Proxmox, ' ~ nb_onboot ~ ' in NetBox'] }}"
+      loop: "{{ pve.proxmox_vms | selectattr('name', 'in', nb_names) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: pve_onboot | bool != nb_onboot | bool
+
+- name: Compliance | Report
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Collect every host's findings
+      ansible.builtin.set_fact:
+        report: >-
+          {{ report | default({})
+             | combine({item: hostvars[item].findings | default(['not checked - host unreachable?'])}) }}
+      loop: "{{ groups['tags_ansible'] }}"
+      when: hostvars[item].findings | default(['x']) | length > 0
+
+    - name: Add the Proxmox findings
+      ansible.builtin.set_fact:
+        report: "{{ report | default({}) | combine({'proxmox': pve_findings}) }}"
+      when: pve_findings | length > 0
+
+    - name: Show the report
+      ansible.builtin.debug:
+        var: report | default('all compliant')
+
+    - name: Fail if anything is out of compliance
+      ansible.builtin.assert:
+        that: report | default({}) | length == 0
+        fail_msg: "{{ report | default({}) | length }} area(s) out of compliance - see the report above"
+        success_msg: "All compliant"
