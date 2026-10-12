@@ -1,0 +1,33 @@
+---
+- name: Require a public key
+  ansible.builtin.assert:
+    that: bootstrap_pubkey | length > 0
+    fail_msg: "Set bootstrap_pubkey (the control node's public key)"
+
+- name: Install sudo
+  ansible.builtin.apt:
+    name: sudo
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the automation user
+  ansible.builtin.user:
+    name: "{{ bootstrap_user }}"
+    shell: /bin/bash
+    groups: sudo
+    append: true
+
+- name: Authorize the control node's SSH key
+  ansible.posix.authorized_key:
+    user: "{{ bootstrap_user }}"
+    key: "{{ bootstrap_pubkey }}"
+
+- name: Passwordless sudo for the automation user
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ bootstrap_user }}"
+    content: "{{ bootstrap_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s

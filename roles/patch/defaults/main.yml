@@ -1,0 +1,5 @@
+---
+# Hosts that must never be rebooted by a playbook (rebooting the control
+# node would kill the run).
+patch_manual_reboot_hosts:
+  - ansible-ctl

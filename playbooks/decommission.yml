@@ -4,12 +4,10 @@
   gather_facts: false
   module_defaults:
     community.proxmox.proxmox: &pve
-      api_host: "{{ proxmox_api_host }}"
       api_user: "{{ proxmox_api_user }}"
       api_token_id: "{{ proxmox_api_token_id }}"
       api_token_secret: "{{ proxmox_api_token_secret }}"
       validate_certs: "{{ proxmox_validate_certs }}"
-      node: pve
     community.proxmox.proxmox_vm_info: *pve
     netbox.netbox.netbox_ip_address: &nb
       netbox_url: "{{ netbox_url }}"
@@ -38,9 +36,20 @@
           - "'lxc' in (nb_vm.tags | map(attribute='slug'))"
         fail_msg: "{{ target }} must exist in NetBox as an LXC with status Decommissioning"
 
+    - name: Which Proxmox host it lives on (its Device in NetBox, else the default)
+      ansible.builtin.set_fact:
+        decom_node: "{{ nb_vm.device.name if nb_vm.device else proxmox_default_node }}"
+
+    - name: The host must be one we know
+      ansible.builtin.assert:
+        that: decom_node in proxmox_nodes
+        fail_msg: "{{ target }}: host '{{ decom_node }}' is not in proxmox_nodes"
+
     # ---------- Proxmox first ----------
     - name: Find the container in Proxmox
       community.proxmox.proxmox_vm_info:
+        api_host: "{{ proxmox_nodes[decom_node].api_host }}"
+        node: "{{ decom_node }}"
         name: "{{ target }}"
         type: lxc
       register: pve_info
@@ -52,12 +61,16 @@
       block:
         - name: Stop
           community.proxmox.proxmox:
+            api_host: "{{ proxmox_nodes[decom_node].api_host }}"
+            node: "{{ decom_node }}"
             vmid: "{{ ct_vmid }}"
             state: stopped
             force: true
 
         - name: Destroy
           community.proxmox.proxmox:
+            api_host: "{{ proxmox_nodes[decom_node].api_host }}"
+            node: "{{ decom_node }}"
             vmid: "{{ ct_vmid }}"
             state: absent
           register: pve_destroy

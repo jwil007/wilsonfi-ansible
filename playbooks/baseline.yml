@@ -1,9 +1,13 @@
 ---
-- name: Personal accounts
-  ansible.builtin.import_playbook: users.yml
-
-- name: SSH hardening
-  ansible.builtin.import_playbook: ssh-hardening.yml
-
-- name: Message of the day
-  ansible.builtin.import_playbook: motd.yml
+# Standard config for every managed host. Safe to rerun; with --check it is
+# the configuration-drift check. Run one part with --tags, e.g. --tags motd
+- name: Baseline
+  hosts: "{{ target | default('tags_ansible:unregistered') }}"
+  become: true
+  roles:
+    - role: users
+      tags: users
+    - role: ssh_hardening
+      tags: ssh
+    - role: motd
+      tags: motd

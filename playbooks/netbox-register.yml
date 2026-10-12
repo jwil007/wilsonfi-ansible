@@ -1,9 +1,14 @@
 ---
+# Discover-first onboarding for an existing host listed in the static
+# `unregistered` group (intent in host_vars register_*). New LXCs should use
+# provision.yml instead.
 - name: Register new hosts in NetBox
   hosts: unregistered
   become: false
   gather_facts: true
   vars:
+    nb_vrf: Infra
+    nb_cluster: "{{ proxmox_nodes[proxmox_default_node].netbox_cluster }}"
     nb_iface: "{{ ansible_facts['default_ipv4']['interface'] }}"
     nb_address: "{{ ansible_facts['default_ipv4']['address'] }}/{{ ansible_facts['default_ipv4']['prefix'] }}"
   module_defaults:
@@ -21,7 +26,7 @@
             data:
               name: "{{ inventory_hostname }}"
               site: "Jacob's Lab"
-              cluster: pve
+              cluster: "{{ nb_cluster }}"
               status: active
               virtual_machine_role: "{{ register_role }}"
               platform: "{{ ansible_facts['distribution'] | lower }}"
@@ -40,11 +45,11 @@
               name: "{{ nb_iface }}"
               enabled: true
 
-        - name: Create IP in VRF Infra and assign it
+        - name: Create IP in the VRF and assign it
           netbox.netbox.netbox_ip_address:
             data:
               address: "{{ nb_address }}"
-              vrf: Infra
+              vrf: "{{ nb_vrf }}"
               status: active
               description: "{{ register_description }}"
               assigned_object:
@@ -57,4 +62,4 @@
               name: "{{ inventory_hostname }}"
               primary_ip4:
                 address: "{{ nb_address }}"
-                vrf: Infra
+                vrf: "{{ nb_vrf }}"

@@ -6,26 +6,23 @@
   hosts: device_roles_sandbox
   become: true
   any_errors_fatal: true
-  tasks:
-    - name: Patch this host
-      ansible.builtin.import_tasks: tasks/patch-host.yml
+  roles:
+    - patch
 
 - name: Patch ring 1 | utility
   hosts: device_roles_utility
   become: true
   any_errors_fatal: true
-  tasks:
-    - name: Patch this host
-      ansible.builtin.import_tasks: tasks/patch-host.yml
+  roles:
+    - patch
 
 - name: Patch ring 2 | core, one host at a time
   hosts: device_roles_core
   become: true
   serial: 1
   any_errors_fatal: true
-  tasks:
-    - name: Patch this host
-      ansible.builtin.import_tasks: tasks/patch-host.yml
+  roles:
+    - patch
 
 - name: Patch | Observed facts to NetBox
   ansible.builtin.import_playbook: netbox-sync-facts.yml

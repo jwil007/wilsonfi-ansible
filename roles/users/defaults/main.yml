@@ -1,0 +1,4 @@
+---
+# Each entry: {name, pubkey, password}. Password only applies when the
+# account is first created.
+users_admins: []
