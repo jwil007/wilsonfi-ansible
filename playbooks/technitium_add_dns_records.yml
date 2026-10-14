@@ -1,0 +1,7 @@
+---
+- name: Create local DNS records for inventory hosts
+  hosts: "{{ target | default('tags_ansible') }}"
+  become: false
+  gather_facts: true
+  roles:
+    - technitium

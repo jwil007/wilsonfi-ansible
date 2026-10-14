@@ -3,3 +3,4 @@ collections:
   - name: netbox.netbox
     version: ">=3.23.0,<4.0.0"
   - name: community.proxmox
+  - name: effectivelywild.technitium_dns

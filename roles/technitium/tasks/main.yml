@@ -1,0 +1,11 @@
+---
+- name: Make DNS records for Netbox hosts with Ansible tag
+  effectivelywild.technitium_dns.technitium_dns_record:
+    api_url: "{{ technitium_api_url }}"
+    api_token: "{{ technitium_token }}"
+    api_port: "{{ technitium_api_port }}"
+    name: "{{ inventory_hostname_short }}.{{ technitium_home_domain }}"
+    type: "{{ technitium_record_type }}"
+    ipAddress: "{{ ansible_host }}"
+    comments: "{{ technitium_comment }}"
+  delegate_to: localhost
