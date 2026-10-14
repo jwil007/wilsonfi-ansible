@@ -1,0 +1,151 @@
+---
+# 1. Observed: what Kea has handed out
+- name: Get leases from Kea
+  ansible.builtin.uri:
+    url: "{{ kea_api_url }}"
+    method: POST
+    url_username: "{{ kea_api_user }}"
+    url_password: "{{ kea_api_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      command: lease4-get-all
+  register: kea_lease_sync_resp
+  # Read-only call, so run it even under --check
+  check_mode: false
+
+# The HTTP socket may answer with a single object or a one-element list
+- name: Unwrap Kea response
+  ansible.builtin.set_fact:
+    kea_lease_sync_answer: "{{ kea_lease_sync_resp.json if kea_lease_sync_resp.json is mapping else kea_lease_sync_resp.json[0] }}"
+
+- name: Fail on Kea error (0 = ok, 3 = no leases)
+  ansible.builtin.assert:
+    that: kea_lease_sync_answer.result in [0, 3]
+    fail_msg: "Kea said: {{ kea_lease_sync_answer.text | default('no text') }}"
+    quiet: true
+
+# state 0 = active (1 = declined, 2 = expired-reclaimed); leases without a MAC are skipped
+- name: Keep active leases that have a MAC
+  ansible.builtin.set_fact:
+    kea_lease_sync_leases: >-
+      {{ kea_lease_sync_answer.arguments.leases | default([])
+         | selectattr('state', 'equalto', 0)
+         | selectattr('hw-address', 'truthy')
+         | list }}
+
+# 2. What NetBox already has
+- name: Get DHCP prefixes from NetBox
+  ansible.builtin.set_fact:
+    kea_lease_sync_prefixes: >-
+      {{ query('netbox.netbox.nb_lookup', 'prefixes',
+               api_filter='tag=dhcp',
+               api_endpoint=kea_lease_sync_url, token=kea_lease_sync_token)
+         | map(attribute='value') | list }}
+
+- name: Get every NetBox IP inside the DHCP prefixes
+  ansible.builtin.set_fact:
+    kea_lease_sync_nb_ips: >-
+      {{ kea_lease_sync_nb_ips | default([])
+         + query('netbox.netbox.nb_lookup', 'ip-addresses',
+                 api_filter='parent=' ~ item.prefix ~ ' vrf_id=' ~ (item.vrf.id if item.vrf else 'null'),
+                 api_endpoint=kea_lease_sync_url, token=kea_lease_sync_token)
+           | map(attribute='value') | list }}
+  loop: "{{ kea_lease_sync_prefixes }}"
+  loop_control:
+    label: "{{ item.prefix }}"
+
+# Owned = tag AND status DHCP. A promoted IP (status Active) that still
+# carries the tag is intent and must never be deleted by this role.
+- name: Get the IPs this role owns
+  ansible.builtin.set_fact:
+    kea_lease_sync_owned: >-
+      {{ query('netbox.netbox.nb_lookup', 'ip-addresses',
+               api_filter='tag=' ~ kea_lease_sync_tag ~ ' status=dhcp',
+               api_endpoint=kea_lease_sync_url, token=kea_lease_sync_token)
+         | map(attribute='value') | list }}
+
+- name: Get the reserved IPs
+  ansible.builtin.set_fact:
+    kea_lease_sync_reserved: >-
+      {{ query('netbox.netbox.nb_lookup', 'ip-addresses',
+               api_filter='tag=' ~ kea_lease_sync_reserved_tag,
+               api_endpoint=kea_lease_sync_url, token=kea_lease_sync_token)
+         | map(attribute='value') | list }}
+
+# 3. Desired: one record per lease, with the mask + VRF of the prefix it sits in.
+#    NetBox does the subnet math: "contains=<ip>" returns the prefix holding it.
+- name: Build desired lease records
+  ansible.builtin.set_fact:
+    kea_lease_sync_desired: "{{ kea_lease_sync_desired | default([]) + ([lease_record] if lease_prefix else []) }}"
+  loop: "{{ kea_lease_sync_leases }}"
+  loop_control:
+    label: "{{ item['ip-address'] }}"
+  vars:
+    lease_prefix: >-
+      {{ query('netbox.netbox.nb_lookup', 'prefixes',
+               api_filter='tag=dhcp contains=' ~ item['ip-address'],
+               api_endpoint=kea_lease_sync_url, token=kea_lease_sync_token)
+         | map(attribute='value') | first | default({}) }}
+    lease_record:
+      ip: "{{ item['ip-address'] }}"
+      address: "{{ item['ip-address'] }}/{{ lease_prefix.prefix.split('/')[1] }}"
+      vrf: "{{ lease_prefix.vrf.name if lease_prefix.vrf else '' }}"
+      mac: "{{ item['hw-address'] | lower }}"
+      dns_name: "{{ item.hostname | default('') | regex_replace('\\.$', '') }}"
+
+# 4. Compare. Plain IPs (strip the /mask) make the set math easy.
+- name: Work out creates, deletes and conflicts
+  ansible.builtin.set_fact:
+    kea_lease_sync_owned_ips: "{{ kea_lease_sync_owned | map(attribute='address') | map('split', '/') | map('first') | list }}"
+    kea_lease_sync_reserved_ips: "{{ kea_lease_sync_reserved | map(attribute='address') | map('split', '/') | map('first') | list }}"
+    kea_lease_sync_desired_ips: "{{ kea_lease_sync_desired | default([]) | map(attribute='ip') | list }}"
+    kea_lease_sync_intent_ips: >-
+      {{ kea_lease_sync_nb_ips | default([])
+         | rejectattr('id', 'in', kea_lease_sync_owned | map(attribute='id') | list)
+         | map(attribute='address') | map('split', '/') | map('first') | list }}
+
+- name: Report leases sitting on IPs NetBox has for something else
+  ansible.builtin.debug:
+    msg: >-
+      CONFLICT {{ item.ip }} leased to {{ item.mac }} ({{ item.dns_name or 'no hostname' }})
+      but NetBox has this IP as intent without tag {{ kea_lease_sync_reserved_tag }}
+  loop: "{{ kea_lease_sync_desired | default([]) }}"
+  loop_control:
+    label: "{{ item.ip }}"
+  when:
+    - item.ip in kea_lease_sync_intent_ips
+    - item.ip not in kea_lease_sync_reserved_ips
+
+# 5. Apply. The module compares first, so unchanged leases cause no writes.
+- name: Create or update lease IPs
+  netbox.netbox.netbox_ip_address:
+    netbox_url: "{{ kea_lease_sync_url }}"
+    netbox_token: "{{ kea_lease_sync_token }}"
+    data:
+      address: "{{ item.address }}"
+      vrf: "{{ item.vrf | default(omit, true) }}"
+      status: dhcp
+      dns_name: "{{ item.dns_name | default(omit, true) }}"
+      tags:
+        - "{{ kea_lease_sync_tag }}"
+      custom_fields:
+        dhcp_mac: "{{ item.mac }}"
+    state: present
+  loop: "{{ kea_lease_sync_desired | default([]) }}"
+  loop_control:
+    label: "{{ item.ip }} {{ item.mac }}"
+  when: item.ip not in kea_lease_sync_intent_ips
+
+- name: Delete lease IPs that are no longer leased
+  netbox.netbox.netbox_ip_address:
+    netbox_url: "{{ kea_lease_sync_url }}"
+    netbox_token: "{{ kea_lease_sync_token }}"
+    data:
+      address: "{{ item.address }}"
+      vrf: "{{ item.vrf.name if item.vrf else omit }}"
+    state: absent
+  loop: "{{ kea_lease_sync_owned }}"
+  loop_control:
+    label: "{{ item.address }}"
+  when: item.address.split('/')[0] not in kea_lease_sync_desired_ips

@@ -11,7 +11,8 @@ token: !vault |
           646534616336626462633936373532386533
 validate_certs: true
 virtual_machines: true
-config_context: false
+config_context: true
+flatten_config_context: true
 query_filters:
   - tag: ansible
   - status: active

@@ -1,0 +1,9 @@
+---
+# Observed state only: mirrors active Kea leases into NetBox as IPs with
+# status DHCP + tag kea-lease. Never touches Kea, never edits other IPs.
+- name: Sync Kea leases into NetBox
+  hosts: localhost
+  become: false
+  gather_facts: false
+  roles:
+    - kea_lease_sync

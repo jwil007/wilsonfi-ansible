@@ -12,7 +12,7 @@
         last_seen: "{{ ansible_facts['date_time']['date'] }}"
   delegate_to: localhost
 
-- name: Update VM interface with mac address       
+- name: Update VM interface with mac address
   netbox.netbox.netbox_vm_interface:
     netbox_url: "{{ netbox_sync_url }}"
     netbox_token: "{{ netbox_sync_token }}"
