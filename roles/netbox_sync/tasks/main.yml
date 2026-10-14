@@ -11,3 +11,14 @@
         os_version: "{{ ansible_facts['distribution_version'] }}"
         last_seen: "{{ ansible_facts['date_time']['date'] }}"
   delegate_to: localhost
+
+- name: Update VM interface with mac address       
+  netbox.netbox.netbox_vm_interface:
+    netbox_url: "{{ netbox_sync_url }}"
+    netbox_token: "{{ netbox_sync_token }}"
+    data:
+      name: "{{ ansible_facts['default_ipv4']['interface'] }}"
+      virtual_machine: "{{ inventory_hostname }}"
+      mac_address: "{{ ansible_facts['default_ipv4']['macaddress'] }}"
+      mtu: "{{ ansible_facts['default_ipv4']['mtu'] }}"
+  delegate_to: localhost
