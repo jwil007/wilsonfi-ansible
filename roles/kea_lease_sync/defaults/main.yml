@@ -1,0 +1,7 @@
+---
+kea_lease_sync_url: "{{ netbox_url }}"
+kea_lease_sync_token: "{{ netbox_token }}"
+# Objects with this tag are owned by this role: created, updated and deleted
+kea_lease_sync_tag: kea-lease
+# IPs with this tag are intent; a lease on them is expected, not a conflict
+kea_lease_sync_reserved_tag: dhcp-reservation
