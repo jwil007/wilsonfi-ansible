@@ -1,0 +1,100 @@
+---
+# Runs once per prefix (from main.yml). kea_dhcp_prefix is the NetBox prefix object.
+
+# Everything is looked up inside this prefix AND its VRF, so overlapping
+# addresses in another VRF can never leak in
+- name: Get pools, gateway and reservations for {{ kea_dhcp_prefix.prefix }}
+  ansible.builtin.set_fact:
+    kea_dhcp_ranges: >-
+      {{ query('netbox.netbox.nb_lookup', 'ip-ranges',
+               api_filter=kea_dhcp_scope ~ ' role=' ~ kea_dhcp_pool_role ~ ' status=active',
+               api_endpoint=kea_dhcp_netbox_url, token=kea_dhcp_netbox_token)
+         | map(attribute='value') | list }}
+    kea_dhcp_gateways: >-
+      {{ query('netbox.netbox.nb_lookup', 'ip-addresses',
+               api_filter=kea_dhcp_scope ~ ' tag=' ~ kea_dhcp_gateway_tag,
+               api_endpoint=kea_dhcp_netbox_url, token=kea_dhcp_netbox_token)
+         | map(attribute='value') | list }}
+    kea_dhcp_reserved: >-
+      {{ query('netbox.netbox.nb_lookup', 'ip-addresses',
+               api_filter=kea_dhcp_scope ~ ' tag=' ~ kea_dhcp_reservation_tag,
+               api_endpoint=kea_dhcp_netbox_url, token=kea_dhcp_netbox_token)
+         | map(attribute='value') | list }}
+  vars:
+    kea_dhcp_scope: "parent={{ kea_dhcp_prefix.prefix }} vrf_id={{ kea_dhcp_prefix.vrf.id if kea_dhcp_prefix.vrf else 'null' }}"
+
+- name: Require exactly one gateway in {{ kea_dhcp_prefix.prefix }}
+  ansible.builtin.assert:
+    that: kea_dhcp_gateways | length == 1
+    fail_msg: >-
+      {{ kea_dhcp_prefix.prefix }}: expected 1 IP tagged {{ kea_dhcp_gateway_tag }},
+      found {{ kea_dhcp_gateways | length }}
+    quiet: true
+
+- name: Start with no reservations for {{ kea_dhcp_prefix.prefix }}
+  ansible.builtin.set_fact:
+    kea_dhcp_reservations: []
+
+# MAC: the primary MAC of the interface the IP is assigned to, else the
+# dhcp_mac custom field (for devices not modeled in NetBox)
+- name: Build reservations for {{ kea_dhcp_prefix.prefix }}
+  ansible.builtin.set_fact:
+    kea_dhcp_reservations: "{{ kea_dhcp_reservations + [kea_dhcp_reservation] }}"
+  loop: "{{ kea_dhcp_reserved }}"
+  loop_control:
+    loop_var: kea_dhcp_ip
+    label: "{{ kea_dhcp_ip.address }}"
+  vars:
+    kea_dhcp_iface_endpoint: "{{ 'interfaces' if kea_dhcp_ip.assigned_object_type == 'dcim.interface' else 'virtualization-interfaces' }}"
+    # raw_data: an id= filter makes nb_lookup return the bare object instead of
+    # {key, value}; raw_data gives the bare object either way
+    kea_dhcp_iface: >-
+      {{ query('netbox.netbox.nb_lookup', kea_dhcp_iface_endpoint,
+               api_filter='id=' ~ kea_dhcp_ip.assigned_object_id, raw_data=true,
+               api_endpoint=kea_dhcp_netbox_url, token=kea_dhcp_netbox_token)
+         | first | default({})
+         if kea_dhcp_ip.assigned_object_id else {} }}
+    kea_dhcp_mac: >-
+      {{ kea_dhcp_iface.primary_mac_address.mac_address
+         if kea_dhcp_iface.primary_mac_address | default(none)
+         else kea_dhcp_ip.custom_fields.dhcp_mac | default('', true) }}
+    kea_dhcp_owner: >-
+      {{ (kea_dhcp_ip.assigned_object.device | default(none)
+          or kea_dhcp_ip.assigned_object.virtual_machine | default(none)
+          or {}).name | default('')
+         if kea_dhcp_ip.assigned_object else '' }}
+    kea_dhcp_reservation:
+      hw-address: "{{ kea_dhcp_mac | lower }}"
+      ip-address: "{{ kea_dhcp_ip.address.split('/')[0] }}"
+      hostname: "{{ kea_dhcp_ip.dns_name or kea_dhcp_owner }}"
+
+- name: Check reservations in {{ kea_dhcp_prefix.prefix }}
+  ansible.builtin.assert:
+    that:
+      - kea_dhcp_reservations | selectattr('hw-address', 'falsy') | list | length == 0
+      - kea_dhcp_reservations | map(attribute='hw-address') | unique | list | length == kea_dhcp_reservations | length
+    fail_msg: >-
+      {{ kea_dhcp_prefix.prefix }}: every reservation needs a MAC and no MAC may appear twice.
+      Got: {{ kea_dhcp_reservations | map(attribute='hw-address') | list }}
+    quiet: true
+
+# Options, least to most specific (last one wins):
+#   config context defaults -> routers from the gateway IP -> the prefix's dhcp_options
+- name: Add to the subnet list {{ kea_dhcp_prefix.prefix }}
+  ansible.builtin.set_fact:
+    kea_dhcp_subnets: "{{ kea_dhcp_subnets + [kea_dhcp_subnet] }}"
+  vars:
+    kea_dhcp_starts: "{{ kea_dhcp_ranges | map(attribute='start_address') | map('split', '/') | map('first') | list }}"
+    kea_dhcp_ends: "{{ kea_dhcp_ranges | map(attribute='end_address') | map('split', '/') | map('first') | list }}"
+    kea_dhcp_lifetime: "{{ kea_dhcp_prefix.custom_fields.dhcp_valid_lifetime }}"
+    kea_dhcp_base:
+      id: "{{ kea_dhcp_prefix.id }}"
+      subnet: "{{ kea_dhcp_prefix.prefix }}"
+      name: "{{ kea_dhcp_prefix.description }}"
+      pools: "{{ kea_dhcp_starts | zip(kea_dhcp_ends) | map('join', '-') | sort | list }}"
+      options: >-
+        {{ kea_dhcp4.option_data
+           | combine({'routers': kea_dhcp_gateways[0].address.split('/')[0]})
+           | combine(kea_dhcp_prefix.custom_fields.dhcp_options | default({}, true)) }}
+      reservations: "{{ kea_dhcp_reservations | sort(attribute='ip-address') }}"
+    kea_dhcp_subnet: "{{ kea_dhcp_base | combine({'valid_lifetime': kea_dhcp_lifetime} if kea_dhcp_lifetime else {}) }}"

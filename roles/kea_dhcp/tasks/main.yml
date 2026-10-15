@@ -1,0 +1,39 @@
+---
+- name: Check the global settings from the NetBox config context
+  ansible.builtin.assert:
+    that:
+      - kea_dhcp4 is defined
+      - kea_dhcp4.option_data is mapping
+    fail_msg: >-
+      kea_dhcp4 is missing. Is config_context enabled in inventory/netbox.yml,
+      and is the config context assigned to {{ inventory_hostname }}?
+    quiet: true
+
+- name: Get DHCP prefixes from NetBox
+  ansible.builtin.set_fact:
+    kea_dhcp_prefixes: >-
+      {{ query('netbox.netbox.nb_lookup', 'prefixes',
+               api_filter='tag=' ~ kea_dhcp_prefix_tag,
+               api_endpoint=kea_dhcp_netbox_url, token=kea_dhcp_netbox_token)
+         | map(attribute='value') | sort(attribute='id') | list }}
+
+- name: Refuse to continue with too few subnets
+  ansible.builtin.assert:
+    that: kea_dhcp_prefixes | length >= kea_dhcp_min_subnets
+    fail_msg: "Only {{ kea_dhcp_prefixes | length }} prefixes tagged {{ kea_dhcp_prefix_tag }} - refusing to build a config"
+    quiet: true
+
+- name: Start with an empty subnet list
+  ansible.builtin.set_fact:
+    kea_dhcp_subnets: []
+
+- name: Build one Kea subnet per prefix
+  ansible.builtin.include_tasks: build_subnet.yml
+  loop: "{{ kea_dhcp_prefixes }}"
+  loop_control:
+    loop_var: kea_dhcp_prefix
+    label: "{{ kea_dhcp_prefix.prefix }}"
+
+- name: Show the result
+  ansible.builtin.debug:
+    var: kea_dhcp_subnets
