@@ -1,0 +1,216 @@
+---
+# Render -> test -> preview -> guard -> write -> reload -> verify (rollback on failure)
+# -> before/after report. Every Kea API call is POST {"command": ...}; the answer can
+# be an object or a one-element list, hence the "is mapping" unwraps.
+
+- name: Assemble the full Kea config
+  ansible.builtin.set_fact:
+    kea_dhcp_config:
+      Dhcp4: >-
+        {{ kea_dhcp_server
+           | combine({'valid-lifetime': kea_dhcp4.valid_lifetime | int,
+                      'subnet4': kea_dhcp_subnets}) }}
+
+# Runs even under --check: a real kea-dhcp4 -t of exactly what would be applied
+- name: Render the candidate config and test it with kea-dhcp4 -t
+  ansible.builtin.copy:
+    content: "{{ kea_dhcp_config | to_nice_json(indent=2) }}\n"
+    dest: "{{ kea_dhcp_candidate_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+    validate: kea-dhcp4 -t %s
+  become: true
+  check_mode: false
+  changed_when: false
+
+- name: Compare the candidate with the current file (passwords redacted)
+  ansible.builtin.shell: |
+    set -o pipefail
+    diff -u {{ kea_dhcp_conf_path }} {{ kea_dhcp_candidate_path }} \
+      | sed -E 's/("password"[[:space:]]*:[[:space:]]*)"[^"]*"/\1"REDACTED"/'
+  args:
+    executable: /bin/bash
+  register: kea_dhcp_file_diff
+  become: true
+  check_mode: false
+  changed_when: false
+  failed_when: kea_dhcp_file_diff.rc > 1  # diff: 0 = same, 1 = different, 2 = error
+
+- name: Show what would change in the config file
+  ansible.builtin.debug:
+    var: kea_dhcp_file_diff.stdout_lines
+  when: kea_dhcp_file_diff.rc == 1
+
+- name: Get Kea's running config (before)
+  ansible.builtin.uri:
+    url: "{{ kea_dhcp_api_url }}"
+    method: POST
+    url_username: "{{ kea_dhcp_api_user }}"
+    url_password: "{{ kea_dhcp_api_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      command: config-get
+  register: kea_dhcp_before_resp
+  check_mode: false
+  no_log: true  # the old config contains the PostgreSQL password
+
+- name: Keep a redacted copy of the running config
+  ansible.builtin.set_fact:
+    kea_dhcp_before: >-
+      {{ kea_dhcp_before_answer.arguments.Dhcp4
+         | combine({'hosts-databases': 'REDACTED'} if 'hosts-databases' in kea_dhcp_before_answer.arguments.Dhcp4 else {}) }}
+  vars:
+    kea_dhcp_before_answer: "{{ kea_dhcp_before_resp.json if kea_dhcp_before_resp.json is mapping else kea_dhcp_before_resp.json[0] }}"
+
+- name: Refuse to remove too many running subnets, limit {{ kea_dhcp_max_removed }}
+  ansible.builtin.assert:
+    that: kea_dhcp_removed | length <= kea_dhcp_max_removed | int
+    fail_msg: >-
+      This run would remove subnet IDs {{ kea_dhcp_removed }} from Kea.
+      If that is intended, rerun with -e kea_dhcp_max_removed={{ kea_dhcp_removed | length }}
+    quiet: true
+  vars:
+    kea_dhcp_removed: >-
+      {{ kea_dhcp_before['subnet4'] | default([]) | map(attribute='id')
+         | difference(kea_dhcp_subnets | map(attribute='id')) | list }}
+
+- name: Read owner and mode of the current config file
+  ansible.builtin.stat:
+    path: "{{ kea_dhcp_conf_path }}"
+  register: kea_dhcp_conf_stat
+  become: true
+
+- name: Write the config (keeps a timestamped backup next to it)
+  ansible.builtin.copy:
+    src: "{{ kea_dhcp_candidate_path }}"
+    remote_src: true
+    dest: "{{ kea_dhcp_conf_path }}"
+    owner: "{{ kea_dhcp_conf_stat.stat.pw_name | default('root') }}"
+    group: "{{ kea_dhcp_conf_stat.stat.gr_name | default('_kea') }}"
+    mode: "{{ kea_dhcp_conf_stat.stat.mode | default('0640') }}"
+    backup: true
+  become: true
+  register: kea_dhcp_write
+
+- name: Reload Kea and verify, roll back on failure
+  when:
+    - kea_dhcp_write is changed
+    - not ansible_check_mode
+  block:
+    - name: Tell Kea to load the new config
+      ansible.builtin.uri:
+        url: "{{ kea_dhcp_api_url }}"
+        method: POST
+        url_username: "{{ kea_dhcp_api_user }}"
+        url_password: "{{ kea_dhcp_api_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          command: config-reload
+      register: kea_dhcp_reload_resp
+
+    - name: Check that Kea accepted it
+      ansible.builtin.assert:
+        that: kea_dhcp_reload_answer.result == 0
+        fail_msg: "config-reload failed: {{ kea_dhcp_reload_answer.text | default('no text') }}"
+        quiet: true
+      vars:
+        kea_dhcp_reload_answer: "{{ kea_dhcp_reload_resp.json if kea_dhcp_reload_resp.json is mapping else kea_dhcp_reload_resp.json[0] }}"
+
+    - name: Ask Kea which subnets it is serving now
+      ansible.builtin.uri:
+        url: "{{ kea_dhcp_api_url }}"
+        method: POST
+        url_username: "{{ kea_dhcp_api_user }}"
+        url_password: "{{ kea_dhcp_api_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          command: subnet4-list
+      register: kea_dhcp_list_resp
+
+    - name: Check Kea serves exactly the subnets NetBox describes
+      ansible.builtin.assert:
+        that: >-
+          kea_dhcp_list_answer.arguments.subnets | map(attribute='id') | sort
+          == kea_dhcp_subnets | map(attribute='id') | sort
+        fail_msg: "Kea serves {{ kea_dhcp_list_answer.arguments.subnets | map(attribute='id') | sort }}"
+        quiet: true
+      vars:
+        kea_dhcp_list_answer: "{{ kea_dhcp_list_resp.json if kea_dhcp_list_resp.json is mapping else kea_dhcp_list_resp.json[0] }}"
+
+  rescue:
+    - name: Put the previous config file back
+      ansible.builtin.copy:
+        src: "{{ kea_dhcp_write.backup_file }}"
+        remote_src: true
+        dest: "{{ kea_dhcp_conf_path }}"
+        mode: preserve
+      become: true
+
+    - name: Load the previous config again
+      ansible.builtin.uri:
+        url: "{{ kea_dhcp_api_url }}"
+        method: POST
+        url_username: "{{ kea_dhcp_api_user }}"
+        url_password: "{{ kea_dhcp_api_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          command: config-reload
+
+    - name: Stop here, rolled back
+      ansible.builtin.fail:
+        msg: "New config failed and was rolled back to {{ kea_dhcp_write.backup_file }}. See the errors above."
+
+# Report: Kea expands every default in config-get, so before/after compare like for like
+- name: Get Kea's running config (after)
+  ansible.builtin.uri:
+    url: "{{ kea_dhcp_api_url }}"
+    method: POST
+    url_username: "{{ kea_dhcp_api_user }}"
+    url_password: "{{ kea_dhcp_api_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      command: config-get
+  register: kea_dhcp_after_resp
+  when: kea_dhcp_write is changed and not ansible_check_mode
+
+- name: Diff Kea's running config, before vs after
+  when: kea_dhcp_write is changed and not ansible_check_mode
+  delegate_to: localhost
+  block:
+    - name: Make the report directory
+      ansible.builtin.file:
+        path: "{{ kea_dhcp_report_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Save the before snapshot
+      ansible.builtin.copy:
+        content: "{{ kea_dhcp_before | to_nice_json(indent=2) }}\n"
+        dest: "{{ kea_dhcp_report_dir }}/{{ inventory_hostname }}-before.json"
+        mode: "0600"
+
+    - name: Save the after snapshot
+      ansible.builtin.copy:
+        content: "{{ kea_dhcp_after_answer.arguments.Dhcp4 | to_nice_json(indent=2) }}\n"
+        dest: "{{ kea_dhcp_report_dir }}/{{ inventory_hostname }}-after.json"
+        mode: "0600"
+      vars:
+        kea_dhcp_after_answer: "{{ kea_dhcp_after_resp.json if kea_dhcp_after_resp.json is mapping else kea_dhcp_after_resp.json[0] }}"
+
+    - name: Compare the snapshots
+      ansible.builtin.command:
+        cmd: diff -u {{ inventory_hostname }}-before.json {{ inventory_hostname }}-after.json
+        chdir: "{{ kea_dhcp_report_dir }}"
+      register: kea_dhcp_running_diff
+      changed_when: false
+      failed_when: kea_dhcp_running_diff.rc > 1
+
+    - name: Show how Kea's running config changed
+      ansible.builtin.debug:
+        var: kea_dhcp_running_diff.stdout_lines

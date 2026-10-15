@@ -34,6 +34,9 @@
     loop_var: kea_dhcp_prefix
     label: "{{ kea_dhcp_prefix.prefix }}"
 
-- name: Show the result
+- name: Show the subnets built from NetBox
   ansible.builtin.debug:
     var: kea_dhcp_subnets
+
+- name: Render, test and apply the config
+  ansible.builtin.import_tasks: apply.yml

@@ -5,5 +5,84 @@ kea_dhcp_prefix_tag: dhcp
 kea_dhcp_gateway_tag: gateway
 kea_dhcp_reservation_tag: dhcp-reservation
 kea_dhcp_pool_role: dhcp-pool
-# Guard against a NetBox outage or bad filter rendering an empty config
+
+# Guards against a NetBox outage or a bad edit wiping DHCP:
+# never build fewer subnets than this...
 kea_dhcp_min_subnets: 1
+# ...and never remove more running subnets than this in one run
+kea_dhcp_max_removed: 1
+
+kea_dhcp_conf_path: /etc/kea/kea-dhcp4.conf
+kea_dhcp_candidate_path: /tmp/kea-dhcp4.conf.candidate
+# Where the before/after running-config snapshots go on the control node
+kea_dhcp_report_dir: /tmp/kea-dhcp-reports
+
+# Kea's HTTP control socket on this server (ansible_host = NetBox primary IP)
+kea_dhcp_http_address: "{{ ansible_host }}"
+kea_dhcp_http_port: 8000
+kea_dhcp_api_url: "http://{{ kea_dhcp_http_address }}:{{ kea_dhcp_http_port }}"
+kea_dhcp_api_user: "{{ kea_api_user }}"
+kea_dhcp_api_password: "{{ kea_api_password }}"
+
+# Renew (T1) / rebind (T2) as a share of each subnet's lease time
+kea_dhcp_calculate_tee_times: true
+kea_dhcp_t1_percent: 0.5
+kea_dhcp_t2_percent: 0.875
+
+kea_dhcp_hooks_dir: /usr/lib/x86_64-linux-gnu/kea/hooks
+
+# Server behaviour: same on every Kea server, changed by PR, not in NetBox.
+# subnet4 and valid-lifetime are added from NetBox data in apply.yml.
+kea_dhcp_server:
+  interfaces-config:
+    interfaces: [eth0]
+    # every subnet arrives through a relay (ip helper), so plain UDP sockets
+    dhcp-socket-type: udp
+    re-detect: true
+  control-sockets:
+    - socket-type: unix
+      socket-name: kea4-ctrl-socket
+    - socket-type: http
+      socket-address: "{{ kea_dhcp_http_address }}"
+      socket-port: "{{ kea_dhcp_http_port }}"
+      authentication:
+        type: basic
+        realm: kea-dhcp4
+        directory: /etc/kea
+        clients:
+          - user-file: netbox-api.user
+            password-file: netbox-api.pass
+  lease-database:
+    type: memfile
+    lfc-interval: 3600
+  hooks-libraries:
+    - library: "{{ kea_dhcp_hooks_dir }}/libdhcp_lease_cmds.so"
+    - library: "{{ kea_dhcp_hooks_dir }}/libdhcp_stat_cmds.so"
+    - library: "{{ kea_dhcp_hooks_dir }}/libdhcp_host_cmds.so"
+    - library: "{{ kea_dhcp_hooks_dir }}/libdhcp_subnet_cmds.so"
+  calculate-tee-times: "{{ kea_dhcp_calculate_tee_times }}"
+  t1-percent: "{{ kea_dhcp_t1_percent }}"
+  t2-percent: "{{ kea_dhcp_t2_percent }}"
+  # A lease whose subnet-id no longer exists is re-matched by address instead
+  # of being dropped (covers the 1->16 / 3->17 renumber, and recreated prefixes)
+  sanity-checks:
+    lease-checks: fix
+  dhcp-ddns:
+    enable-updates: true
+    server-ip: 127.0.0.1
+    server-port: 53001
+  ddns-send-updates: true
+  ddns-override-client-update: true
+  ddns-update-on-renew: true
+  ddns-replace-client-name: never
+  ddns-qualifying-suffix: home.arpa
+  hostname-char-set: "[^A-Za-z0-9.-]"
+  hostname-char-replacement: ""
+  loggers:
+    - name: kea-dhcp4
+      severity: INFO
+      debuglevel: 0
+      output-options:
+        - output: stdout
+          flush: true
+          pattern: "%-5p %m\n"

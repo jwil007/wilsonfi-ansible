@@ -78,23 +78,42 @@
       Got: {{ kea_dhcp_reservations | map(attribute='hw-address') | list }}
     quiet: true
 
+# Kea wants each pool as {"pool": "start-end"}; one NetBox IP range = one pool,
+# which is what allows non-contiguous pools
+- name: Start with no pools for {{ kea_dhcp_prefix.prefix }}
+  ansible.builtin.set_fact:
+    kea_dhcp_pools: []
+
+- name: Build pools for {{ kea_dhcp_prefix.prefix }}
+  ansible.builtin.set_fact:
+    kea_dhcp_pools: "{{ kea_dhcp_pools + [{'pool': kea_dhcp_start ~ '-' ~ kea_dhcp_end}] }}"
+  loop: "{{ kea_dhcp_ranges | sort(attribute='start_address') }}"
+  loop_control:
+    loop_var: kea_dhcp_range
+    label: "{{ kea_dhcp_range.display }}"
+  vars:
+    kea_dhcp_start: "{{ kea_dhcp_range.start_address.split('/')[0] }}"
+    kea_dhcp_end: "{{ kea_dhcp_range.end_address.split('/')[0] }}"
+
+# The subnet is built directly in Kea's own format, so the config file is just
+# this data serialized to JSON.
 # Options, least to most specific (last one wins):
 #   config context defaults -> routers from the gateway IP -> the prefix's dhcp_options
 - name: Add to the subnet list {{ kea_dhcp_prefix.prefix }}
   ansible.builtin.set_fact:
     kea_dhcp_subnets: "{{ kea_dhcp_subnets + [kea_dhcp_subnet] }}"
   vars:
-    kea_dhcp_starts: "{{ kea_dhcp_ranges | map(attribute='start_address') | map('split', '/') | map('first') | list }}"
-    kea_dhcp_ends: "{{ kea_dhcp_ranges | map(attribute='end_address') | map('split', '/') | map('first') | list }}"
+    kea_dhcp_options: >-
+      {{ kea_dhcp4.option_data
+         | combine({'routers': kea_dhcp_gateways[0].address.split('/')[0]})
+         | combine(kea_dhcp_prefix.custom_fields.dhcp_options | default({}, true)) }}
     kea_dhcp_lifetime: "{{ kea_dhcp_prefix.custom_fields.dhcp_valid_lifetime }}"
     kea_dhcp_base:
       id: "{{ kea_dhcp_prefix.id }}"
       subnet: "{{ kea_dhcp_prefix.prefix }}"
-      name: "{{ kea_dhcp_prefix.description }}"
-      pools: "{{ kea_dhcp_starts | zip(kea_dhcp_ends) | map('join', '-') | sort | list }}"
-      options: >-
-        {{ kea_dhcp4.option_data
-           | combine({'routers': kea_dhcp_gateways[0].address.split('/')[0]})
-           | combine(kea_dhcp_prefix.custom_fields.dhcp_options | default({}, true)) }}
+      user-context:
+        subnet-name: "{{ kea_dhcp_prefix.description }}"
+      pools: "{{ kea_dhcp_pools }}"
+      option-data: "{{ kea_dhcp_options | dict2items(key_name='name', value_name='data') }}"
       reservations: "{{ kea_dhcp_reservations | sort(attribute='ip-address') }}"
-    kea_dhcp_subnet: "{{ kea_dhcp_base | combine({'valid_lifetime': kea_dhcp_lifetime} if kea_dhcp_lifetime else {}) }}"
+    kea_dhcp_subnet: "{{ kea_dhcp_base | combine({'valid-lifetime': kea_dhcp_lifetime | int} if kea_dhcp_lifetime else {}) }}"
