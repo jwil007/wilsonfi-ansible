@@ -1,0 +1,5 @@
+---
+# Shared by the VM and device tasks so both write the same observed fields.
+netbox_sync_facts:
+  os_version: "{{ ansible_facts['distribution_version'] }}"
+  last_seen: "{{ ansible_facts['date_time']['date'] }}"
