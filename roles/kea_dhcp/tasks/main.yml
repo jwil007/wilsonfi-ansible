@@ -13,7 +13,7 @@
   ansible.builtin.set_fact:
     kea_dhcp_prefixes: >-
       {{ query('netbox.netbox.nb_lookup', 'prefixes',
-               api_filter='tag=' ~ kea_dhcp_prefix_tag,
+               api_filter='tag=' ~ kea_dhcp_prefix_tag ~ ' ' ~ (kea_dhcp_prefix_statuses | map('regex_replace', '^', 'status=') | join(' ')),
                api_endpoint=kea_dhcp_netbox_url, token=kea_dhcp_netbox_token)
          | map(attribute='value') | sort(attribute='id') | list }}
 
