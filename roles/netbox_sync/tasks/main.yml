@@ -1,24 +1,40 @@
 ---
 # Observed values only. vCPUs/memory are intent (set in NetBox, applied by
 # provision.yml), so they are deliberately not written here.
-- name: Write observed facts to the NetBox VM
-  netbox.netbox.netbox_virtual_machine:
+#
+# nb_inventory sets is_virtual per host: true for VMs, false for devices
+# (e.g. the Raspberry Pi). Writing a device through the VM module would try
+# to create a new VM and fail NetBox validation.
+- name: Sync virtual machine
+  when: is_virtual | default(true) | bool
+  delegate_to: localhost
+  block:
+    - name: Write observed facts to the NetBox VM
+      netbox.netbox.netbox_virtual_machine:
+        netbox_url: "{{ netbox_sync_url }}"
+        netbox_token: "{{ netbox_sync_token }}"
+        data:
+          name: "{{ inventory_hostname }}"
+          custom_fields: "{{ netbox_sync_facts }}"
+
+    - name: Update VM interface with mac address
+      netbox.netbox.netbox_vm_interface:
+        netbox_url: "{{ netbox_sync_url }}"
+        netbox_token: "{{ netbox_sync_token }}"
+        data:
+          name: "{{ ansible_facts['default_ipv4']['interface'] }}"
+          virtual_machine: "{{ inventory_hostname }}"
+          mac_address: "{{ ansible_facts['default_ipv4']['macaddress'] }}"
+          mtu: "{{ ansible_facts['default_ipv4']['mtu'] }}"
+
+# Custom fields only: creating a device interface needs a NetBox interface
+# type, which facts can't reliably tell us.
+- name: Write observed facts to the NetBox device
+  netbox.netbox.netbox_device:
     netbox_url: "{{ netbox_sync_url }}"
     netbox_token: "{{ netbox_sync_token }}"
     data:
       name: "{{ inventory_hostname }}"
-      custom_fields:
-        os_version: "{{ ansible_facts['distribution_version'] }}"
-        last_seen: "{{ ansible_facts['date_time']['date'] }}"
+      custom_fields: "{{ netbox_sync_facts }}"
   delegate_to: localhost
-
-- name: Update VM interface with mac address
-  netbox.netbox.netbox_vm_interface:
-    netbox_url: "{{ netbox_sync_url }}"
-    netbox_token: "{{ netbox_sync_token }}"
-    data:
-      name: "{{ ansible_facts['default_ipv4']['interface'] }}"
-      virtual_machine: "{{ inventory_hostname }}"
-      mac_address: "{{ ansible_facts['default_ipv4']['macaddress'] }}"
-      mtu: "{{ ansible_facts['default_ipv4']['mtu'] }}"
-  delegate_to: localhost
+  when: not (is_virtual | default(true) | bool)
