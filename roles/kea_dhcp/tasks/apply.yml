@@ -3,13 +3,49 @@
 # -> before/after report. Every Kea API call is POST {"command": ...}; the answer can
 # be an object or a one-element list, hence the "is mapping" unwraps.
 
+# HA: one peer entry per Kea server in the inventory group, addressed by its
+# NetBox primary IP. Every server renders the same list; only
+# this-server-name differs.
+- name: Build the HA peer list
+  ansible.builtin.set_fact:
+    kea_dhcp_ha_peers: "{{ kea_dhcp_ha_peers | default([]) + [kea_dhcp_peer] }}"
+  loop: "{{ kea_dhcp_group_members }}"
+  loop_control:
+    loop_var: kea_dhcp_peer_name
+  vars:
+    kea_dhcp_group_members: "{{ groups[kea_dhcp_servers_group] | default([]) | sort }}"
+    kea_dhcp_peer:
+      name: "{{ kea_dhcp_peer_name }}"
+      url: "http://{{ hostvars[kea_dhcp_peer_name].ansible_host }}:{{ kea_dhcp_ha_port }}/"
+      role: "{{ 'primary' if kea_dhcp_peer_name == kea_dhcp_ha_primary else 'standby' }}"
+  when: kea_dhcp_group_members | length > 1
+
+- name: Check the HA pair makes sense
+  ansible.builtin.assert:
+    that:
+      - kea_dhcp_ha_peers | length == 2
+      - kea_dhcp_ha_peers | selectattr('role', 'equalto', 'primary') | list | length == 1
+      - inventory_hostname in kea_dhcp_ha_peers | map(attribute='name')
+    fail_msg: >-
+      HA needs exactly 2 servers in {{ kea_dhcp_servers_group }}, one of them
+      {{ kea_dhcp_ha_primary }}, including this host. Got: {{ kea_dhcp_ha_peers }}
+    quiet: true
+  when: kea_dhcp_ha_peers is defined
+
 - name: Assemble the full Kea config
   ansible.builtin.set_fact:
     kea_dhcp_config:
       Dhcp4: >-
         {{ kea_dhcp_server
            | combine({'valid-lifetime': kea_dhcp4.valid_lifetime | int,
+                      'hooks-libraries': kea_dhcp_server['hooks-libraries'] + kea_dhcp_ha_hooks,
                       'subnet4': kea_dhcp_subnets}) }}
+  vars:
+    kea_dhcp_ha_hooks: >-
+      {{ [{'library': kea_dhcp_hooks_dir ~ '/libdhcp_ha.so',
+           'parameters': {'high-availability': [kea_dhcp_ha | combine({'this-server-name': inventory_hostname,
+                                                                         'peers': kea_dhcp_ha_peers})]}}]
+         if kea_dhcp_ha_peers is defined else [] }}
 
 # Runs even under --check: a real kea-dhcp4 -t of exactly what would be applied
 - name: Render the candidate config and test it with kea-dhcp4 -t
@@ -42,6 +78,8 @@
     var: kea_dhcp_file_diff.stdout_lines
   when: kea_dhcp_file_diff.rc == 1
 
+# status -1 = nothing listening (first deploy on a new server: the packaged
+# config has no HTTP socket). Anything else but 200 (e.g. 401) is a real error.
 - name: Get Kea's running config (before)
   ansible.builtin.uri:
     url: "{{ kea_dhcp_api_url }}"
@@ -54,12 +92,25 @@
       command: config-get
   register: kea_dhcp_before_resp
   check_mode: false
+  failed_when: kea_dhcp_before_resp.status | default(-1) not in [200, -1]
   no_log: true  # the old config contains the PostgreSQL password
+
+- name: Note whether Kea's HTTP API is answering
+  ansible.builtin.set_fact:
+    kea_dhcp_api_up: "{{ kea_dhcp_before_resp.status | default(-1) == 200 }}"
+
+- name: Warn that Kea will be restarted instead of reloaded
+  ansible.builtin.debug:
+    msg: >-
+      Nothing answers at {{ kea_dhcp_api_url }} (first deploy?). The new config
+      will be loaded by restarting {{ kea_dhcp_service }}.
+  when: not kea_dhcp_api_up
 
 - name: Keep a redacted copy of the running config
   ansible.builtin.set_fact:
     kea_dhcp_before: >-
-      {{ kea_dhcp_before_answer.arguments.Dhcp4
+      {{ {} if not kea_dhcp_api_up else
+         kea_dhcp_before_answer.arguments.Dhcp4
          | combine({'hosts-databases': 'REDACTED'} if 'hosts-databases' in kea_dhcp_before_answer.arguments.Dhcp4 else {}) }}
   vars:
     kea_dhcp_before_answer: "{{ kea_dhcp_before_resp.json if kea_dhcp_before_resp.json is mapping else kea_dhcp_before_resp.json[0] }}"
@@ -110,6 +161,7 @@
         body:
           command: config-reload
       register: kea_dhcp_reload_resp
+      when: kea_dhcp_api_up
 
     - name: Check that Kea accepted it
       ansible.builtin.assert:
@@ -118,6 +170,21 @@
         quiet: true
       vars:
         kea_dhcp_reload_answer: "{{ kea_dhcp_reload_resp.json if kea_dhcp_reload_resp.json is mapping else kea_dhcp_reload_resp.json[0] }}"
+      when: kea_dhcp_api_up
+
+    - name: Restart Kea to load the new config (API was not answering)
+      ansible.builtin.systemd_service:
+        name: "{{ kea_dhcp_service }}"
+        state: restarted
+      become: true
+      when: not kea_dhcp_api_up
+
+    - name: Wait for Kea's HTTP API to come up
+      ansible.builtin.wait_for:
+        host: "{{ kea_dhcp_http_address }}"
+        port: "{{ kea_dhcp_http_port }}"
+        timeout: 30
+      when: not kea_dhcp_api_up
 
     - name: Ask Kea which subnets it is serving now
       ansible.builtin.uri:
@@ -160,6 +227,14 @@
         body_format: json
         body:
           command: config-reload
+      when: kea_dhcp_api_up
+
+    - name: Restart Kea on the previous config
+      ansible.builtin.systemd_service:
+        name: "{{ kea_dhcp_service }}"
+        state: restarted
+      become: true
+      when: not kea_dhcp_api_up
 
     - name: Stop here, rolled back
       ansible.builtin.fail:
@@ -214,3 +289,29 @@
     - name: Show how Kea's running config changed
       ansible.builtin.debug:
         var: kea_dhcp_running_diff.stdout_lines
+
+# Report only: right after a reload HA restarts its state machine, so
+# "waiting" or "syncing" here is normal; it settles within a minute
+- name: Ask Kea for its HA state
+  ansible.builtin.uri:
+    url: "{{ kea_dhcp_api_url }}"
+    method: POST
+    url_username: "{{ kea_dhcp_api_user }}"
+    url_password: "{{ kea_dhcp_api_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      command: ha-heartbeat
+  register: kea_dhcp_ha_resp
+  failed_when: false
+  when:
+    - kea_dhcp_ha_peers is defined
+    - not ansible_check_mode
+
+- name: Show the HA state
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ kea_dhcp_ha_answer.arguments.state | default('unknown') }}"
+  vars:
+    kea_dhcp_ha_answer: "{{ kea_dhcp_ha_resp.json if kea_dhcp_ha_resp.json is mapping else kea_dhcp_ha_resp.json[0] }}"
+  when:
+    - kea_dhcp_ha_resp.json is defined
