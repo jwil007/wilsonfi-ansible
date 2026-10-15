@@ -12,7 +12,13 @@ proxmox_default_node: pve
 proxmox_nodes:
   pve:
     api_host: 10.0.10.21
-    netbox_cluster: pve
+    netbox_cluster: pve-cluster
+    storage: local-lvm
+    bridge: vmbr0
+    lxc_template: local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst
+  pve-node-2:
+    api_host: 10.0.10.20
+    netbox_cluster: pve-cluster
     storage: local-lvm
     bridge: vmbr0
     lxc_template: local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst

@@ -16,10 +16,14 @@
       register: sshd_t
       changed_when: false
 
-    - name: Root SSH login must be off
+    - name: Root SSH login must match policy
+      vars:
+        root_login_policy: "{{ ssh_permit_root_login | default('no') }}"
+        # sshd -T reports prohibit-password under its old name
+        root_login_expected: "{{ root_login_policy | replace('prohibit-password', 'without-password') }}"
       ansible.builtin.set_fact:
-        findings: "{{ findings + ['sshd: root login is allowed'] }}"
-      when: "'permitrootlogin no' not in sshd_t.stdout_lines"
+        findings: "{{ findings + ['sshd: root login is not ' ~ root_login_policy] }}"
+      when: ('permitrootlogin ' ~ root_login_expected) not in sshd_t.stdout_lines
 
     - name: Password SSH must be off
       ansible.builtin.set_fact:
