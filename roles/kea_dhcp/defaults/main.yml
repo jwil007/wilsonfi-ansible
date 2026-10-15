@@ -2,6 +2,8 @@
 kea_dhcp_netbox_url: "{{ netbox_url }}"
 kea_dhcp_netbox_token: "{{ netbox_token }}"
 kea_dhcp_prefix_tag: dhcp
+# Only these prefix statuses are served; planned/reserved prefixes wait in NetBox
+kea_dhcp_prefix_statuses: [active, deprecated]
 kea_dhcp_gateway_tag: gateway
 kea_dhcp_reservation_tag: dhcp-reservation
 kea_dhcp_pool_role: dhcp-pool
