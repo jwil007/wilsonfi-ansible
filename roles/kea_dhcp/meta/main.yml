@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: jwil007
+  description: wilsonfi lab - kea_dhcp
+  license: MIT
+  min_ansible_version: "2.21"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+dependencies: []

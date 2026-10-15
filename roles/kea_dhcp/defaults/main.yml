@@ -1,0 +1,9 @@
+---
+kea_dhcp_netbox_url: "{{ netbox_url }}"
+kea_dhcp_netbox_token: "{{ netbox_token }}"
+kea_dhcp_prefix_tag: dhcp
+kea_dhcp_gateway_tag: gateway
+kea_dhcp_reservation_tag: dhcp-reservation
+kea_dhcp_pool_role: dhcp-pool
+# Guard against a NetBox outage or bad filter rendering an empty config
+kea_dhcp_min_subnets: 1

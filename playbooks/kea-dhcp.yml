@@ -1,0 +1,8 @@
+---
+# NetBox -> Kea. Step 4.3: build and show the data only; nothing is written.
+- name: Build Kea DHCPv4 config from NetBox
+  hosts: "{{ target | default('kea-dhcp') }}"
+  become: false
+  gather_facts: false
+  roles:
+    - kea_dhcp
