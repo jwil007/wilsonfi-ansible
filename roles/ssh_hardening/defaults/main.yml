@@ -1,4 +1,4 @@
 ---
 ssh_hardening_settings:
-  PermitRootLogin: "no"
+  PermitRootLogin: "{{ ssh_permit_root_login | default('no') }}"
   PasswordAuthentication: "no"

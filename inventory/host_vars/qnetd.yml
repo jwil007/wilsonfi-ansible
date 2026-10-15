@@ -1,0 +1,5 @@
+---
+# Proxmox QDevice: `pvecm qdevice setup` (and remove, e.g. when a node joins)
+# SSHes in as root from the cluster nodes. Day-to-day quorum traffic is
+# corosync-qnetd on TCP 5403 and needs no SSH. Key-only root is accepted here.
+ssh_permit_root_login: prohibit-password

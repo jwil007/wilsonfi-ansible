@@ -19,6 +19,10 @@ users_admins:
 
 motd_banner: "wilsonfi lab"
 
+# sshd PermitRootLogin, written by ssh_hardening and checked by compliance.
+# Override per host in host_vars when root SSH is genuinely needed.
+ssh_permit_root_login: "no"
+
 
 kea_api_url: http://10.0.10.4:8000
 kea_api_user: netbox
