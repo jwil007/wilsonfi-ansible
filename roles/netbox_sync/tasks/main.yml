@@ -38,3 +38,23 @@
       custom_fields: "{{ netbox_sync_facts }}"
   delegate_to: localhost
   when: not (is_virtual | default(true) | bool)
+
+- name: Find existing IP in NetBox
+  delegate_to: localhost
+  ansible.builtin.set_fact:
+    nb_ip: >-
+      {{ query('netbox.netbox.nb_lookup', 'ip-addresses',
+               api_filter='address=' ~ ansible_host,
+               api_endpoint=netbox_sync_url,
+               token=netbox_sync_token) | first }}
+
+- name: Write hostname to assigned IPs
+  delegate_to: localhost
+  netbox.netbox.netbox_ip_address:
+        netbox_url: "{{ netbox_sync_url }}"
+        netbox_token: "{{ netbox_sync_token }}"
+        data:
+          address: "{{ nb_ip.value.address }}"   # keeps the real prefix length, e.g. /24
+          vrf: "{{ nb_ip.value.vrf.id }}"
+          dns_name: "{{ inventory_hostname }}"
+          description: "assigned to {{ inventory_hostname }}"
