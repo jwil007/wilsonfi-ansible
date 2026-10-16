@@ -17,6 +17,10 @@ users_admins:
     pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOKdM3KMyYnj0IIa3JrSfAZ1PW9HIIkUZTT0NZjjLcd8 jacob@laptop"
     password: "{{ vault_jacob_password }}"
 
+  - name: jacob-hpe-mac
+    pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB0G9/jfKXyVs7w1XwNFckuBm1grscWT1A20A5hVp3jX jacobwilson@HPE-K2YG6VPFHG"
+    password: "{{ vault_jacob_password }}"
+
 motd_banner: "wilsonfi lab"
 
 # sshd PermitRootLogin, written by ssh_hardening and checked by compliance.
