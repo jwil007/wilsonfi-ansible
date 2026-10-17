@@ -95,18 +95,45 @@
     kea_dhcp_start: "{{ kea_dhcp_range.start_address.split('/')[0] }}"
     kea_dhcp_end: "{{ kea_dhcp_range.end_address.split('/')[0] }}"
 
-# The subnet is built directly in Kea's own format, so the config file is just
-# this data serialized to JSON.
 # Options, least to most specific (last one wins):
 #   config context defaults -> routers from the gateway IP -> the prefix's dhcp_options
-- name: Add to the subnet list {{ kea_dhcp_prefix.prefix }}
+- name: Merge the options for {{ kea_dhcp_prefix.prefix }}
   ansible.builtin.set_fact:
-    kea_dhcp_subnets: "{{ kea_dhcp_subnets + [kea_dhcp_subnet] }}"
-  vars:
     kea_dhcp_options: >-
       {{ kea_dhcp4.option_data
          | combine({'routers': kea_dhcp_gateways[0].address.split('/')[0]})
          | combine(kea_dhcp_prefix.custom_fields.dhcp_options | default({}, true)) }}
+    kea_dhcp_option_data: []
+
+# Each option is either
+#   "name": "value"            -> {"name": "name", "data": "value"}
+#   "name": {Kea option object} -> passed through as-is, for csv-format, space,
+#                                  code, always-send... "name" is filled in from
+#                                  the key unless the object has "code" or "name".
+#                                  An empty object {} sends just the option
+#                                  (e.g. option 43 carrying sub-options).
+- name: Convert options to Kea format for {{ kea_dhcp_prefix.prefix }}
+  ansible.builtin.set_fact:
+    kea_dhcp_option_data: "{{ kea_dhcp_option_data + [kea_dhcp_option_entry] }}"
+  loop: "{{ kea_dhcp_options | dict2items }}"
+  loop_control:
+    loop_var: kea_dhcp_option
+    label: "{{ kea_dhcp_option.key }}"
+  vars:
+    kea_dhcp_option_entry: >-
+      {{ ({} if 'code' in kea_dhcp_option.value or 'name' in kea_dhcp_option.value
+          else {'name': kea_dhcp_option.key}) | combine(kea_dhcp_option.value)
+         if kea_dhcp_option.value is mapping else
+         {'name': kea_dhcp_option.key,
+          'data': (kea_dhcp_option.value | string | lower) if kea_dhcp_option.value is boolean
+                  else kea_dhcp_option.value | string} }}
+
+# The subnet is built directly in Kea's own format, so the config file is just
+# this data serialized to JSON.
+- name: Add to the subnet list {{ kea_dhcp_prefix.prefix }}
+  ansible.builtin.set_fact:
+    kea_dhcp_subnets: "{{ kea_dhcp_subnets + [kea_dhcp_subnet] }}"
+  vars:
     kea_dhcp_lifetime: "{{ kea_dhcp_prefix.custom_fields.dhcp_valid_lifetime }}"
     kea_dhcp_base:
       id: "{{ kea_dhcp_prefix.id }}"
@@ -114,6 +141,6 @@
       user-context:
         subnet-name: "{{ kea_dhcp_prefix.description }}"
       pools: "{{ kea_dhcp_pools }}"
-      option-data: "{{ kea_dhcp_options | dict2items(key_name='name', value_name='data') }}"
+      option-data: "{{ kea_dhcp_option_data }}"
       reservations: "{{ kea_dhcp_reservations | sort(attribute='ip-address') }}"
     kea_dhcp_subnet: "{{ kea_dhcp_base | combine({'valid-lifetime': kea_dhcp_lifetime | int} if kea_dhcp_lifetime else {}) }}"

@@ -32,12 +32,15 @@
     quiet: true
   when: kea_dhcp_ha_peers is defined
 
+# option-def: custom option definitions (e.g. option 43 sub-options) from the
+# config context key kea_dhcp4.option_def, a list in Kea's own format
 - name: Assemble the full Kea config
   ansible.builtin.set_fact:
     kea_dhcp_config:
       Dhcp4: >-
         {{ kea_dhcp_server
            | combine({'valid-lifetime': kea_dhcp4.valid_lifetime | int,
+                      'option-def': kea_dhcp4.option_def | default([]),
                       'hooks-libraries': kea_dhcp_server['hooks-libraries'] + kea_dhcp_ha_hooks,
                       'subnet4': kea_dhcp_subnets}) }}
   vars:
