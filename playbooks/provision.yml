@@ -181,3 +181,7 @@
         data:
           name: "{{ target }}"
           status: active
+          
+- name: Provision | Add DNS record
+  ansible.builtin.import_playbook: technitium_add_dns_records.yml
+
