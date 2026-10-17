@@ -1,0 +1,19 @@
+- name: Patch host | Require a target
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Require a target
+      ansible.builtin.assert:
+        that: target is defined
+        fail_msg: "Run with -e target=<host or group>"
+
+- name: Patch host | {{ target }}
+  hosts: "{{ target }}"
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - patch
+
+- name: Patch host | Observed facts to NetBox
+  ansible.builtin.import_playbook: netbox-sync-facts.yml
