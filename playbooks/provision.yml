@@ -123,6 +123,7 @@
         nameserver: "{{ provision_dns }}"
         pubkey: "{{ bootstrap_pubkey }}"
         onboot: "{{ provision_onboot }}"
+        timeout: 300
         state: present
       register: pve_ct
 
@@ -166,8 +167,8 @@
 - name: Provision | Baseline
   ansible.builtin.import_playbook: baseline.yml
 
-- name: Provision | Observed facts to NetBox
-  ansible.builtin.import_playbook: netbox-sync-facts.yml
+- name: Provision | Patch
+  ansible.builtin.import_playbook: patch.yml
 
 - name: Provision | Mark active in NetBox
   hosts: localhost
