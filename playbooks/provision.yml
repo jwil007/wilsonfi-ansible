@@ -167,8 +167,8 @@
 - name: Provision | Baseline
   ansible.builtin.import_playbook: baseline.yml
 
-- name: Provision | Patch
-  ansible.builtin.import_playbook: patch.yml
+- name: Provision | Patch Host
+  ansible.builtin.import_playbook: patch_host.yml
 
 - name: Provision | Mark active in NetBox
   hosts: localhost
