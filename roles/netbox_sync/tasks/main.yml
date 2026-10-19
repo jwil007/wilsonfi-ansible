@@ -56,5 +56,5 @@
         data:
           address: "{{ nb_ip.value.address }}"   # keeps the real prefix length, e.g. /24
           vrf: "{{ nb_ip.value.vrf.id }}"
-          dns_name: "{{ inventory_hostname }}.home.arpa"
+          dns_name: "{{ inventory_hostname }}.{{ home_domain }}"
           description: "assigned to {{ inventory_hostname }}"
