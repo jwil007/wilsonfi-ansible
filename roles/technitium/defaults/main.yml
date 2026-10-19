@@ -1,6 +1,6 @@
 technitium_api_url: "https://technitium.wilsonfi.dev"
 technitium_token: "{{ vault_technitium_api_token }}"
 technitium_api_port: "443"
-technitium_home_domain: "home.arpa"
+technitium_home_domain: "wilsonfi.com"
 technitium_comment: "DNS record added by Ansible"
 technitium_record_type: "A"
