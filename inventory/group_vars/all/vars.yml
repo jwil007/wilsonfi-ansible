@@ -31,3 +31,5 @@ ssh_permit_root_login: "no"
 kea_api_url: http://10.0.10.4:8000
 kea_api_user: netbox
 kea_api_password: "{{ vault_kea_api_password }}"
+
+home_domain: wilsonfi.com
