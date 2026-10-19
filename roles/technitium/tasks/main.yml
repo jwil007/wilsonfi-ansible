@@ -4,7 +4,7 @@
     api_url: "{{ technitium_api_url }}"
     api_token: "{{ technitium_token }}"
     api_port: "{{ technitium_api_port }}"
-    name: "{{ inventory_hostname_short }}.{{ technitium_home_domain }}"
+    name: "{{ inventory_hostname_short }}.{{ home_domain }}"
     type: "{{ technitium_record_type }}"
     ipAddress: "{{ ansible_host }}"
     comments: "{{ technitium_comment }}"
