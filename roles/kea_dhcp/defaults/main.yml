@@ -102,7 +102,7 @@ kea_dhcp_server:
   ddns-override-client-update: true
   ddns-update-on-renew: true
   ddns-replace-client-name: never
-  ddns-qualifying-suffix: {{ home_domain }}
+  ddns-qualifying-suffix: "{{ home_domain }}"
   hostname-char-set: "[^A-Za-z0-9.-]"
   hostname-char-replacement: ""
   loggers:
